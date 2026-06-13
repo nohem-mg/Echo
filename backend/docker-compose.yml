@@ -33,3 +33,14 @@ services:
       - path: ./services/acrcloud-service/.env
         required: false
     restart: unless-stopped
+
+  soundcloud-service:
+    build:
+      context: .
+      dockerfile: services/soundcloud-service/Dockerfile
+    ports:
+      - "8003:8003"
+    env_file:
+      - path: ./services/soundcloud-service/.env
+        required: false
+    restart: unless-stopped

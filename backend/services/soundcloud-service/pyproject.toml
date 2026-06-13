@@ -1,0 +1,40 @@
+[project]
+name = "echo-soundcloud-service"
+version = "0.1.0"
+description = "Echo — post-SEAL SoundCloud publish endpoint."
+requires-python = ">=3.10"
+dependencies = [
+    # echo-common is a sibling path package (backend/packages/echo-common). Install it
+    # first: `pip install -e ../../packages/echo-common`, then `pip install -e ".[dev]"`.
+    # The Dockerfile does both. It provides FastAPI, the error envelope, structured
+    # logging, and audio validation.
+    "uvicorn[standard]>=0.29",
+    "pydantic-settings>=2.2",
+    "httpx>=0.27",
+    # Needed to parse multipart/form-data (file + JSON metadata field).
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
+
+[tool.pyrefly]
+search-path = [".", "../../packages/echo-common"]
