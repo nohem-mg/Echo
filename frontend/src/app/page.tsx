@@ -26,9 +26,17 @@ import {
   X,
 } from "lucide-react";
 import { isAddress, parseEther, toHex, type Abi } from "viem";
-import { useAccount, useChainId, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useAccount, useChainId, usePublicClient, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
+import {
+  buildFlowCommitmentHash,
+  buildFlowRegistryRef,
+  findRegistryTrackIdByCommitment,
+  isTrackRegisteredOnChain,
+  parseTrackRegisteredTrackId,
+  worldNullifierToBigInt,
+} from "@/lib/registry-handoff";
 import type { EchoFlow, EchoPayment, EchoPipelineStep, EchoReport, EchoSimilarTrack, PaymentCreateResponse, TrackUploadResponse, WorldVerification } from "@/lib/types";
 import registryAbi from "@/lib/abi/Registry.json";
 
@@ -258,9 +266,10 @@ export default function Home() {
   const [pipelineProgressStatus, setPipelineProgressStatus] = useState("");
   const [isStartingPipeline, setIsStartingPipeline] = useState(false);
   const [creDisabled, setCreDisabled] = useState(false);
-  const { writeContractAsync: revealTrackContract, isPending: isRevealingTrack } = useWriteContract();
+  const { writeContractAsync: writeRegistryContract, isPending: isWritingRegistry } = useWriteContract();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const publicClient = usePublicClient({ chainId: sepolia.id });
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
   const { sendTransactionAsync, isPending: isSendingTransaction } = useSendTransaction();
 
@@ -921,6 +930,131 @@ export default function Home() {
     await startPipelineForFlow(flow.id, audioFile);
   }
 
+  async function ensureRegistryWalletReady() {
+    if (!echoConfig.registryAddress) {
+      return;
+    }
+
+    if (!isConnected || !address) {
+      throw new Error("Connect your wallet on Sepolia before starting analysis.");
+    }
+
+    if (chainId !== echoConfig.registryChainId) {
+      await switchChain({ chainId: sepolia.id });
+    }
+  }
+
+  async function persistRegistryRegistration(
+    flowId: string,
+    registryTrackId: `0x${string}`,
+    commitmentHash: `0x${string}`,
+    registryRef: `0x${string}`,
+  ) {
+    const persistResponse = await fetch("/api/registry/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        flowId,
+        registryTrackId,
+        commitmentHash,
+        registryRef,
+      }),
+    });
+
+    if (!persistResponse.ok) {
+      const errorBody = await readApiErrorBody(persistResponse);
+      throw new Error(formatApiError(errorBody, `Failed to persist Registry track ID (HTTP ${persistResponse.status})`));
+    }
+
+    const persisted = (await persistResponse.json()) as { flow?: EchoFlow };
+    if (!persisted.flow) {
+      throw new Error("Registry registration persisted without returning the updated flow.");
+    }
+
+    return persisted.flow;
+  }
+
+  async function registerTrackOnChain(currentFlow: EchoFlow, uploadTrackId: string) {
+    if (!echoConfig.registryAddress) {
+      return currentFlow;
+    }
+
+    if (!publicClient) {
+      throw new Error("Sepolia RPC client is not ready yet. Retry in a few seconds.");
+    }
+
+    const registryAddress = echoConfig.registryAddress as `0x${string}`;
+    if (currentFlow.registryTrackId) {
+      const alreadyRegistered = await isTrackRegisteredOnChain(
+        publicClient,
+        registryAddress,
+        currentFlow.registryTrackId,
+      );
+      if (alreadyRegistered) {
+        return currentFlow;
+      }
+    }
+
+    await ensureRegistryWalletReady();
+
+    if (!address) {
+      throw new Error("Connect your wallet on Sepolia before starting analysis.");
+    }
+
+    const commitmentHash = buildFlowCommitmentHash(currentFlow.id, currentFlow.trackFingerprint);
+    const registryRef = buildFlowRegistryRef(uploadTrackId);
+
+    const recoveredTrackId = await findRegistryTrackIdByCommitment(
+      publicClient,
+      registryAddress,
+      address,
+      commitmentHash,
+    );
+    if (recoveredTrackId) {
+      setPipelineProgressStatus("Linking existing on-chain Registry entry...");
+      return persistRegistryRegistration(currentFlow.id, recoveredTrackId, commitmentHash, registryRef);
+    }
+
+    const nullifier = worldNullifierToBigInt(currentFlow.nullifierHash);
+
+    setPipelineProgressStatus("Registering track on Ethereum Sepolia...");
+
+    try {
+      const registerTxHash = await writeRegistryContract({
+        address: registryAddress,
+        abi: registryContractAbi,
+        functionName: "registerTrack",
+        args: [nullifier, commitmentHash, registryRef],
+        chain: sepolia,
+      });
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: registerTxHash });
+      if (receipt.status !== "success") {
+        throw new Error("registerTrack transaction failed on Sepolia.");
+      }
+
+      const registryTrackId = parseTrackRegisteredTrackId(receipt.logs, registryAddress);
+      if (!registryTrackId) {
+        throw new Error("registerTrack succeeded but TrackRegistered event was not found.");
+      }
+
+      return persistRegistryRegistration(currentFlow.id, registryTrackId, commitmentHash, registryRef);
+    } catch (error) {
+      const retryTrackId = await findRegistryTrackIdByCommitment(
+        publicClient,
+        registryAddress,
+        address,
+        commitmentHash,
+      );
+      if (retryTrackId) {
+        setPipelineProgressStatus("Recovering on-chain Registry track ID...");
+        return persistRegistryRegistration(currentFlow.id, retryTrackId, commitmentHash, registryRef);
+      }
+
+      throw error;
+    }
+  }
+
   async function startPipelineForFlow(flowId: string, file: File) {
     try {
       setIsStartingPipeline(true);
@@ -945,8 +1079,12 @@ export default function Home() {
 
       const uploadData = (await uploadResponse.json()) as TrackUploadResponse;
       console.log("[Echo] Upload success, track:", uploadData.track?.id, "flow status:", uploadData.flow?.status);
-      setFlow(uploadData.flow);
+      let activeFlow = uploadData.flow;
+      setFlow(activeFlow);
       setLivePipelineSteps(uploadData.pipeline);
+
+      activeFlow = await registerTrackOnChain(activeFlow, uploadData.track.id);
+      setFlow(activeFlow);
       setPipelineProgressStatus("Starting CRE handoff...");
 
       console.log("[Echo] Starting pipeline...");
@@ -1018,7 +1156,7 @@ export default function Home() {
       setPipelineProgressStatus("Sending revealTrack transaction to Ethereum Sepolia...");
       const profileHash = toBytes32Hex(activeReport?.submitted_track?.fingerprint ?? flow?.trackFingerprint ?? "pending-profile");
 
-      const txHash = await revealTrackContract({
+      const txHash = await writeRegistryContract({
         address: echoConfig.registryAddress as `0x${string}`,
         abi: registryContractAbi,
         functionName: "revealTrack",
@@ -1641,10 +1779,10 @@ export default function Home() {
             </div>
             <button
               className="mt-8 inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#8fd5ff] px-5 font-black text-[#050505] transition hover:bg-[#b8e5ff] disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!hasRegistrySeal || !certificateTrackId || isRevealingTrack}
+              disabled={!hasRegistrySeal || !certificateTrackId || isWritingRegistry}
               onClick={handleRevealTrack}
             >
-              {isRevealingTrack ? "Revealing..." : "Reveal track"}
+              {isWritingRegistry ? "Revealing..." : "Reveal track"}
               <ArrowUpRight className="size-5" aria-hidden="true" />
             </button>
           </div>

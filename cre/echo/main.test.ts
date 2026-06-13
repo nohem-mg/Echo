@@ -237,7 +237,6 @@ describe("pipeline events", () => {
       flowId: INPUT.flowId,
       flowStatus: "pipeline_completed",
       report: REPORT,
-      registryTrackId: INPUT.trackId,
       registryTxHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
       registryRef: INPUT.registryRef,
       commitmentHash: INPUT.commitmentHash,

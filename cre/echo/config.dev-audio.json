@@ -4,6 +4,8 @@
   "secretsOwner": "",
   "registryAddress": "0xf011Bb61C7F255571F96FB29cf7b8c7B85FB2Cc0",
   "writeReportGasLimit": "500000",
+  "sepoliaRpcUrl": "https://ethereum-sepolia-rpc.publicnode.com",
+  "keystoneForwarderAddress": "0x15fc6ae953e024d975e77382eeec56a9101f9f88",
   "pipelineEventsUrl": "http://127.0.0.1:3000/api/pipeline/events",
   "pipelineEventsSecret": "dev-test"
 }

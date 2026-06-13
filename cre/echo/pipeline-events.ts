@@ -111,7 +111,6 @@ export function buildPipelineCompletionEvent(
     flowStatus,
     reason: result.reason,
     report: result.report,
-    registryTrackId: cleanSeal ? result.trackId : undefined,
     registryTxHash: cleanSeal ? result.registryTxHash : undefined,
     registryRef: cleanSeal ? result.registryRef ?? input.registryRef : undefined,
     commitmentHash: result.commitmentHash,

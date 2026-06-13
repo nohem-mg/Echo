@@ -54,6 +54,12 @@ export type Config = PipelineEventsConfig & {
   registryAddress?: string;
   /** Gas limit for EVMClient.writeReport (MockKeystoneForwarder routing). */
   writeReportGasLimit?: string;
+  /** Sepolia JSON-RPC URL used when writeReport omits tx_hash (CRE sim + --broadcast). */
+  sepoliaRpcUrl?: string;
+  /** MockKeystoneForwarder on Sepolia — writeReport lands here before Registry.route(). */
+  keystoneForwarderAddress?: string;
+  /** Optional CRE wallet filter when resolving the broadcast tx hash via RPC. */
+  creWalletAddress?: string;
 };
 
 // Minimal logger so the core DAG logic stays decoupled from the CRE runtime.
@@ -125,17 +131,26 @@ const finalizeResult = (
   const registry = runtime.config.registryAddress?.toLowerCase();
   let registryTxHash: string | undefined;
   if (registry && registry !== "0x0000000000000000000000000000000000000000") {
-    registryTxHash = dispatchOnChainCallback(
-      runtime,
-      runtime.config.registryAddress!,
-      report,
-      runtime.config.writeReportGasLimit,
-    );
+    registryTxHash = dispatchOnChainCallback(runtime, runtime.config.registryAddress!, report, {
+      gasLimit: runtime.config.writeReportGasLimit,
+      sepoliaRpcUrl: runtime.config.sepoliaRpcUrl,
+      keystoneForwarderAddress: runtime.config.keystoneForwarderAddress,
+      creWalletAddress: runtime.config.creWalletAddress,
+    });
   }
 
   const callback = buildRegistryCallback({ ...withAgents, attestation });
-  return { ...withAgents, attestation, callback, registryTxHash };
+  return omitUndefinedFields({
+    ...withAgents,
+    attestation,
+    callback,
+    registryTxHash,
+  });
 };
+
+function omitUndefinedFields<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+}
 
 // --------------------------------------------------------------------------
 // DAG orchestration (pure: depends only on a logger + an injectable client,

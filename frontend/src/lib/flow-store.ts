@@ -24,6 +24,13 @@ type ConfirmPaymentInput = {
   walletAddress?: `0x${string}`;
 };
 
+type ConfirmRegistryRegistrationInput = {
+  flowId: string;
+  registryTrackId: `0x${string}`;
+  commitmentHash: `0x${string}`;
+  registryRef: `0x${string}`;
+};
+
 type SaveTrackInput = {
   id: string;
   flowId: string;
@@ -331,6 +338,68 @@ export async function confirmFlowPayment(input: ConfirmPaymentInput) {
     txHash: input.txHash,
     walletAddress: input.walletAddress ?? flow.walletAddress,
     status: "payment_confirmed",
+  }));
+}
+
+export async function confirmFlowRegistryRegistration(input: ConfirmRegistryRegistrationInput) {
+  const existing = await getFlow(input.flowId);
+
+  if (!existing) {
+    throw new FlowStoreError("Flow not found", 404);
+  }
+
+  if (existing.registryTrackId?.toLowerCase() === input.registryTrackId.toLowerCase()) {
+    if (process.env.DATABASE_URL) {
+      await ensurePostgresSchema();
+      const result = await getPool().query(
+        `
+        UPDATE echo_flows
+        SET
+          commitment_hash = $2,
+          registry_ref = $3,
+          updated_at = now()
+        WHERE id = $1
+        RETURNING *
+        `,
+        [input.flowId, input.commitmentHash, input.registryRef],
+      );
+
+      return rowToFlow(result.rows[0]);
+    }
+
+    assertLocalFileStoreAvailable();
+    return updateFlowFile(input.flowId, (flow) => ({
+      ...flow,
+      commitmentHash: input.commitmentHash,
+      registryRef: input.registryRef,
+    }));
+  }
+
+  if (process.env.DATABASE_URL) {
+    await ensurePostgresSchema();
+    const result = await getPool().query(
+      `
+      UPDATE echo_flows
+      SET
+        commitment_hash = $2,
+        registry_ref = $3,
+        registry_track_id = $4,
+        updated_at = now()
+      WHERE id = $1
+      RETURNING *
+      `,
+      [input.flowId, input.commitmentHash, input.registryRef, input.registryTrackId],
+    );
+
+    return rowToFlow(result.rows[0]);
+  }
+
+  assertLocalFileStoreAvailable();
+  return updateFlowFile(input.flowId, (flow) => ({
+    ...flow,
+    commitmentHash: input.commitmentHash,
+    registryRef: input.registryRef,
+    registryTrackId: input.registryTrackId,
   }));
 }
 
