@@ -4,11 +4,13 @@ version = "0.1.0"
 description = "Echo — pipeline Step 1: raw audio -> MIDI conversion via Spotify BasicPitch."
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "fastapi>=0.110",
+    # echo-common is a sibling path package (backend/packages/echo-common). Plain pip
+    # can't resolve it by name, so install it first:
+    #   pip install -e ../../packages/echo-common
+    # then `pip install -e ".[dev]"`. The Dockerfile does both. It provides FastAPI,
+    # the error envelope, structured logging, audio validation, and the MIDI contract.
     "uvicorn[standard]>=0.29",
-    "pydantic>=2.6",
     "pydantic-settings>=2.2",
-    "python-multipart>=0.0.9",
     # BasicPitch + its runtime. The exact ML backend (tf/coreml/tflite/onnx) is
     # resolved by the platform; see README for the per-OS choice.
     "basic-pitch>=0.4.0",
@@ -42,3 +44,7 @@ filterwarnings = [
     "ignore:'audioop' is deprecated:DeprecationWarning",
     "ignore:'sunau' is deprecated:DeprecationWarning",
 ]
+
+[tool.pyrefly]
+search-path = [".", "../../packages/echo-common"]
+

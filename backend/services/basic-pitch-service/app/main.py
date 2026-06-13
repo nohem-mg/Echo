@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from echo_common.app_factory import create_app
+from echo_common.log import configure_logging, get_logger
+from fastapi import FastAPI
 
 from .config import settings
-from .core.errors import register_error_handlers
-from .core.log import configure_logging, get_logger
 from .routes import router
 from .service import BasicPitchService
 
@@ -26,26 +25,9 @@ async def lifespan(app: FastAPI):
     yield
 
 
-def create_app() -> FastAPI:
-    app = FastAPI(
-        title="Echo — basic-pitch-service",
-        description="Pipeline Step 1: raw audio -> MIDI conversion.",
-        version="0.1.0",
-        lifespan=lifespan,
-    )
-
-    @app.middleware("http")
-    async def attach_request_id(request: Request, call_next):
-        request.state.request_id = request.headers.get(
-            "x-request-id", str(uuid.uuid4())
-        )
-        response = await call_next(request)
-        response.headers["x-request-id"] = request.state.request_id
-        return response
-
-    register_error_handlers(app)
-    app.include_router(router)
-    return app
-
-
-app = create_app()
+app = create_app(
+    title="Echo — basic-pitch-service",
+    description="Pipeline Step 1: raw audio -> MIDI conversion.",
+    router=router,
+    lifespan=lifespan,
+)

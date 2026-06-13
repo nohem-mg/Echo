@@ -20,9 +20,9 @@ RESOURCES = Path(__file__).parent / "resources"
 
 @pytest.fixture(scope="module")
 def real_client() -> TestClient:
-    from app.main import create_app
+    from app.main import app
 
-    with TestClient(create_app()) as c:  # triggers the real model warmup
+    with TestClient(app) as c:  # triggers the real model warmup
         yield c
 
 

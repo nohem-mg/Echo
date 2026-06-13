@@ -1,12 +1,25 @@
 # Echo backend — service orchestrator.
-# One block per microservice. As the pipeline grows (acrcloud, midi-similarity,
-# ...), add a block here; the CRE then reaches them by service name on the
-# internal network (e.g. http://basic-pitch-service:8001).
+# Build context is this directory (backend/) so each image can pull in the shared
+# echo-common package alongside its own service. One block per microservice; the
+# CRE reaches them by service name on the internal network
+# (e.g. http://basic-pitch-service:8001, http://acrcloud-service:8002).
 services:
   basic-pitch-service:
-    build: ./services/basic-pitch-service
+    build:
+      context: .
+      dockerfile: services/basic-pitch-service/Dockerfile
     ports:
       - "8001:8001"
     env_file:
       - ./services/basic-pitch-service/.env.example
+    restart: unless-stopped
+
+  acrcloud-service:
+    build:
+      context: .
+      dockerfile: services/acrcloud-service/Dockerfile
+    ports:
+      - "8002:8002"
+    env_file:
+      - ./services/acrcloud-service/.env.example
     restart: unless-stopped

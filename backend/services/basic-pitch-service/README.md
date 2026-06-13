@@ -72,6 +72,7 @@ the API (that's Docker's job). From this directory:
 # Python 3.11 REQUIRED (see note below)
 /opt/homebrew/opt/python@3.11/bin/python3.11 -m venv .venv311
 source .venv311/bin/activate          # prompt shows "(.venv311)"
+pip install -e ../../packages/echo-common   # shared package first
 pip install -e ".[dev]"               # basic-pitch + deps (~2-4 min)
 
 pytest                                # 8 tests: 6 unit (model mocked) + 2 integration WAV/MP3

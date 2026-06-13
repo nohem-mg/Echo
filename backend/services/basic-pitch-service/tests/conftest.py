@@ -7,11 +7,14 @@ of the transport layer. We patch the service and the duration probe.
 from __future__ import annotations
 
 import pytest
+from typing import Generator
 from fastapi.testclient import TestClient
 
+from echo_common import audio as audio_module
+from echo_common.schemas.midi import MidiSequence, NoteEvent
+
 from app import service as service_module
-from app.core import audio as audio_module
-from app.schemas.midi import MidiSequence, ModelInfo, NoteEvent
+from app.schemas import ModelInfo
 
 
 @pytest.fixture
@@ -21,8 +24,9 @@ def fake_sequence() -> MidiSequence:
 
 
 @pytest.fixture
-def client(monkeypatch, fake_sequence) -> TestClient:
+def client(monkeypatch, fake_sequence) -> Generator[TestClient, None, None]:
     # The model is not loaded, and convert() returns a fake sequence.
+
     monkeypatch.setattr(service_module.BasicPitchService, "warmup", lambda self: None)
     monkeypatch.setattr(
         service_module.BasicPitchService,
@@ -32,7 +36,7 @@ def client(monkeypatch, fake_sequence) -> TestClient:
     # The duration probe does not open librosa on a fake file.
     monkeypatch.setattr(audio_module, "enforce_duration", lambda path, maxd: 0.92)
 
-    from app.main import create_app
+    from app.main import app
 
-    with TestClient(create_app()) as c:
+    with TestClient(app) as c:
         yield c
