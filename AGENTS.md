@@ -1,8 +1,8 @@
-# AGENTS.md — The Loop Protocol
+# AGENTS.md — Echo
 
 Guide de contexte pour tout agent IA travaillant sur ce repo.
-Source de vérité détaillée : [`docs/TheLoopProtocol_ETHGlobalNY2026_FR_v3.md`](./docs/TheLoopProtocol_ETHGlobalNY2026_FR_v3.md)
-et la répartition des tâches [`docs/TheLoopProtocol_Tasks_CNM.md`](./docs/TheLoopProtocol_Tasks_CNM.md).
+Source de vérité détaillée : [`docs/Echo_ETHGlobalNY2026_FR_v3.md`](./docs/Echo_ETHGlobalNY2026_FR_v3.md)
+et la répartition des tâches [`docs/Echo_Tasks_CNM.md`](./docs/Echo_Tasks_CNM.md).
 
 ## Le projet en une phrase
 

@@ -1,5 +1,5 @@
   
-**THE LOOP PROTOCOL**
+**ECHO**
 
 Répartition des tâches — Équipe CNM Agency
 
@@ -14,7 +14,7 @@ Répartition des tâches — Équipe CNM Agency
 CNM Agency  —  Juin 2026  
 **CYRIAC** 
 
-  *Front-end & UX  —  The Loop Protocol  —  ETH Global New York 2026*
+  *Front-end & UX  —  Echo  —  ETH Global New York 2026*
 
 | MVP — indispensable pour la démo hackathon | IMP — important pour les prix sponsors | BONUS — nice-to-have si temps disponible |
 | :---- | :---- | :---- |
@@ -71,7 +71,7 @@ CNM Agency  —  Juin 2026
 
   **CYRIAC MIRKOVIK**
 
-  *Smart Contracts  —  The Loop Protocol  —  ETH Global New York 2026*
+  *Smart Contracts  —  Echo  —  ETH Global New York 2026*
 
 | □ MVP — indispensable pour la démo hackathon | □ IMP — important pour les prix sponsors | □ BONUS — nice-to-have si temps disponible |
 | :---- | :---- | :---- |
@@ -145,7 +145,7 @@ CNM Agency  —  Juin 2026
 
   **NOHEM MONNET-GANI**
 
-  *CRE Workflow & Agents IA  —  The Loop Protocol  —  ETH Global New York 2026*
+  *CRE Workflow & Agents IA  —  Echo  —  ETH Global New York 2026*
 
 | □ MVP — indispensable pour la démo hackathon | □ IMP — important pour les prix sponsors | □ BONUS — nice-to-have si temps disponible |
 | :---- | :---- | :---- |
@@ -223,7 +223,7 @@ CNM Agency  —  Juin 2026
 
   **GAGEXCM**
 
-  *Backend, Pipeline & Intégrations  —  The Loop Protocol  —  ETH Global New York 2026*
+  *Backend, Pipeline & Intégrations  —  Echo  —  ETH Global New York 2026*
 
 | □ MVP — indispensable pour la démo hackathon | □ IMP — important pour les prix sponsors | □ BONUS — nice-to-have si temps disponible |
 | :---- | :---- | :---- |

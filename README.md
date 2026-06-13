@@ -1,4 +1,4 @@
-# The Loop Protocol
+# Echo
 
 Registre open source de *prior-art* musical on-chain — **ETH Global New York 2026** (CNM Agency).
 

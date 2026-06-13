@@ -1,5 +1,5 @@
   
-**THE LOOP PROTOCOL**
+**ECHO**
 
 Registre Open Source de Prior-Art Musical
 
@@ -14,9 +14,9 @@ CNM Agency  —  Juin 2026
 
 # **1\. Résumé Exécutif**
 
-The Loop Protocol est un registre de prior-art musical on-chain conçu pour les artistes indépendants qui ont besoin d'une preuve d'antériorité horodatée, vérifiable — et confidentielle — sans jamais exposer leur musique non encore sortie.
+Echo est un registre de prior-art musical on-chain conçu pour les artistes indépendants qui ont besoin d'une preuve d'antériorité horodatée, vérifiable — et confidentielle — sans jamais exposer leur musique non encore sortie.
 
-**Idée centrale :** Avec l'essor de la musique générée par IA et les procès emblématiques (Suno, Udio), les artistes ont besoin d'un moyen trustless, vérifiable et privé d'affirmer "j'ai créé ça en premier". The Loop Protocol le rend possible en combinant empreinte IA multi-agents, environnements d'exécution de confiance (TEE) et horodatage on-chain dans un pipeline agentique parallélisé en 5 phases.
+**Idée centrale :** Avec l'essor de la musique générée par IA et les procès emblématiques (Suno, Udio), les artistes ont besoin d'un moyen trustless, vérifiable et privé d'affirmer "j'ai créé ça en premier". Echo le rend possible en combinant empreinte IA multi-agents, environnements d'exécution de confiance (TEE) et horodatage on-chain dans un pipeline agentique parallélisé en 5 phases.
 
 | Problème | Aucun moyen trustless, privé et vérifiable de revendiquer l'antériorité musicale avant la sortie d'un morceau. |
 | :---: | :---- |
@@ -48,11 +48,11 @@ Ce dont les artistes ont besoin est un système satisfaisant simultanément quat
 
 * **Résistant au Sybil :** un humain \= une preuve de création, empêchant le spam du registre par des bots ou des labels concurrents.
 
-Aucune solution existante — que ce soit l'US Copyright Office, la SACEM, ou tout projet blockchain — ne satisfait les quatre propriétés simultanément. The Loop Protocol, si.
+Aucune solution existante — que ce soit l'US Copyright Office, la SACEM, ou tout projet blockchain — ne satisfait les quatre propriétés simultanément. Echo, si.
 
 # **3\. Pipeline Agentique : Séquence & Parallélisation**
 
-Le cœur de The Loop Protocol est un **pipeline DAG (Directed Acyclic Graph) en 4 étapes** conçu pour maximiser la parallélisation agentique tout en garantissant un schéma fail-fast strict. Les étapes 2A et 2B s’exécutent en parallèle ; l’étape 3 démarre dès que 2A est terminée sans attendre 2B ; l’étape 4 attend que 2B ET 3 soient toutes les deux complètes.
+Le cœur de Echo est un **pipeline DAG (Directed Acyclic Graph) en 4 étapes** conçu pour maximiser la parallélisation agentique tout en garantissant un schéma fail-fast strict. Les étapes 2A et 2B s’exécutent en parallèle ; l’étape 3 démarre dès que 2A est terminée sans attendre 2B ; l’étape 4 attend que 2B ET 3 soient toutes les deux complètes.
 
 ## **3.1 Vue d’Ensemble du DAG**
 
@@ -114,7 +114,7 @@ Le rapport produit par Step 4 est rendu dans l’interface artiste sous forme de
 
 ## **3.5 Intégration SoundCloud via Unlink**
 
-Après un enregistrement SEALED réussi, l’artiste peut optionnellement publier son morceau sur SoundCloud via l’API SoundCloud. Ce flux est entièrement routé par Unlink : transit audio privé, paiement non-traçable, et lien entre inscription Loop Protocol et publication SoundCloud inobservable on-chain.
+Après un enregistrement SEALED réussi, l’artiste peut optionnellement publier son morceau sur SoundCloud via l’API SoundCloud. Ce flux est entièrement routé par Unlink : transit audio privé, paiement non-traçable, et lien entre inscription Echo et publication SoundCloud inobservable on-chain.
 
 ## **3.6 Clearance API (Monétisation)**
 
@@ -153,7 +153,7 @@ Chainlink Confidential AI fournit un isolement matériel (Intel TDX) pour les ag
 
 # **5\. Stack Technique**
 
-| Couche | Technologie | Rôle dans The Loop Protocol |
+| Couche | Technologie | Rôle dans Echo |
 | ----- | ----- | ----- |
 | **Identité humaine** | **World ID \+ AgentKit** | Prouve que chaque artiste est un humain unique et vérifié. AgentKit émet des credentials Human-Backed Agent qui conditionnent l'entrée dans le pipeline et la mécanique de free-trial. |
 | **Orchestration** | **Chainlink CRE** | Moteur de workflow DAG 5-phases. Gère la parallélisation A∥B et C∥D, les synchronisations inter-phases, et l'écriture finale du verdict on-chain via callback. |
@@ -168,7 +168,7 @@ Chainlink Confidential AI fournit un isolement matériel (Intel TDX) pour les ag
 
 ## **5.1 Architecture de Stockage Walrus**
 
-Walrus (construit sur Sui) fournit deux niveaux de stockage pour The Loop Protocol :
+Walrus (construit sur Sui) fournit deux niveaux de stockage pour Echo :
 
 * **Blobs audio :** Le fichier audio original est chiffré côté client avant upload. Seul l'artiste détient la clé de déchiffrement jusqu'au REVEAL.
 
@@ -178,7 +178,7 @@ Walrus (construit sur Sui) fournit deux niveaux de stockage pour The Loop Protoc
 
 # **6\. Stratégie de Candidature aux Prix**
 
-The Loop Protocol cible 20 500 $ répartis sur cinq tracks de prix auprès de trois sponsors.
+Echo cible 20 500 $ répartis sur cinq tracks de prix auprès de trois sponsors.
 
 ## **6.1  World — Track A (AgentKit)  |  7 500 $**
 
@@ -258,7 +258,7 @@ Chainlink CRE agit comme un exécuteur off-chain de confiance. Une fois le DAG 5
 
 # **8\. Différenciation Concurrentielle**
 
-| Propriété | US Copyright Office | SACEM / OGC | Timestamp NFT | The Loop Protocol |
+| Propriété | US Copyright Office | SACEM / OGC | Timestamp NFT | Echo |
 | ----- | :---: | :---: | :---: | :---: |
 | **Trustless** | ✗ | ✗ | \~ | ✓ |
 | **Confidentiel (pré-release)** | ✗ | ✗ | ✗ | ✓ |

@@ -275,7 +275,7 @@ export default function Home() {
       <section id="pipeline" className="px-4 py-16 sm:px-6 lg:px-8">
         <div className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[0.9fr_1.1fr]">
           <div>
-            <p className="font-hand text-3xl text-[#9ef7c9]">the loop, but sealed</p>
+            <p className="font-hand text-3xl text-[#9ef7c9]">echo, but sealed</p>
             <h2 className="mt-4 max-w-3xl font-display text-[clamp(3rem,7vw,6.5rem)] font-black leading-[0.9]">
               One private run. One public timestamp.
             </h2>
