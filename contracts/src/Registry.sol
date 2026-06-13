@@ -26,13 +26,7 @@ contract Registry {
     error NullifierAlreadyUsed();
     error TrackNotFound();
     error NotArtist();
-    error NotCRE();
     error InvalidStatus();
-
-    modifier onlyCRE() {
-        if (msg.sender != creAddress) revert NotCRE();
-        _;
-    }
 
     constructor(address _creAddress) {
         creAddress = _creAddress;
@@ -60,18 +54,27 @@ contract Registry {
         emit TrackRegistered(msg.sender, trackId, commitmentHash, block.timestamp);
     }
 
-    /// @notice Chainlink CRE callback — writes the final verdict.
-    /// @param trackId  Track ID
-    /// @param verdict  0=SEALED 1=REVEALED 2=SIMILAR 3=REJECTED
-    /// @dev   attestation  Confidential AI attestation — verification not yet implemented (TODO)
-    function receiveCRECallback(
-        bytes32 trackId,
-        Status  verdict,
-        bytes calldata /* attestation */ // TODO: verify Chainlink attestation (IMP)
-    ) external onlyCRE {
+    /// @notice Chainlink CRE forwarder entry point — writes the final verdict.
+    function route(
+        bytes32 /* transmissionId */,
+        address /* transmitter */,
+        address /* receiver */,
+        bytes calldata /* metadata */,
+        bytes calldata validatedReport
+    ) external returns (bool) {
+        require(msg.sender == creAddress, "Only CRE forwarder");
+
+        (bytes32 trackId, uint8 verdictRaw) = abi.decode(
+            validatedReport, (bytes32, uint8)
+        );
+
         if (entries[trackId].timestamp == 0) revert TrackNotFound();
+
+        Status verdict = Status(verdictRaw);
         entries[trackId].status = verdict;
         emit StatusUpdated(trackId, verdict);
+
+        return true;
     }
 
     function revealTrack(bytes32 trackId, bytes32 fullProfileHash) external {

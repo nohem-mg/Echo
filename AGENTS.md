@@ -31,7 +31,7 @@
 ## Network
 
 - Chain: Ethereum Sepolia (chain ID 11155111)
-- Registry contract: `0x152e74c85256F138ae4FA007bfd56917E74b8029`
+- Registry contract: `0x52eE9af7918c69Ab4DC08b9C0b2a82C24Fd6DC6C`
 - ABI: `contracts/out/Registry.sol/Registry.json`
 
 ---
