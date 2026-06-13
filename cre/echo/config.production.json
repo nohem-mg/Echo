@@ -2,5 +2,8 @@
   "backendBaseUrl": "https://echo-backend.example.com",
   "useConfidentialHttp": true,
   "secretsOwner": "",
-  "registryAddress": "0x52eE9af7918c69Ab4DC08b9C0b2a82C24Fd6DC6C"
+  "registryAddress": "0xd2A1ec2a6Ef3973A1519E9aaf0A77c01955E0f72",
+  "writeReportGasLimit": "500000",
+  "pipelineEventsUrl": "https://echo-beta-lime.vercel.app/api/pipeline/events",
+  "pipelineEventsSecret": ""
 }

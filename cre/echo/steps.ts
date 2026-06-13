@@ -1,5 +1,5 @@
 // ==========================================================================
-// Echo — The 5 backend calls in the DAG (one per GAGEXCM endpoint)
+// Echo — The 6 backend calls in the DAG (one per GAGEXCM endpoint)
 // Each step returns a deferred handle: `.result()` forces resolution.
 // ==========================================================================
 
@@ -11,6 +11,7 @@ import type {
   CompareCommercialResponse,
   ComparePrivateResponse,
   ConvertResponse,
+  RegisterResponse,
   RegistryMatch,
   ReportResponse,
 } from "./types";
@@ -37,7 +38,7 @@ export function stepCheckPublic<C>(
   });
 }
 
-// Step 2B — MIDI algo: comparison vs private registry (Walrus).
+// Step 2B — MIDI algo: comparison vs private registry (PostgreSQL).
 export function stepComparePrivate<C>(
   runtime: Runtime<C>,
   baseUrl: string,
@@ -61,6 +62,19 @@ export function stepCompareCommercial<C>(
   });
 }
 
+// SEAL — persist track in the private registry (verdict CLEAN only).
+export function stepRegister<C>(
+  runtime: Runtime<C>,
+  baseUrl: string,
+  args: { trackId: string; midiSequence: string; fingerprint?: string },
+): Deferred<RegisterResponse> {
+  return backendPost<C, RegisterResponse>(runtime, baseUrl, "/api/registry", {
+    track_id: args.trackId,
+    midiSequence: args.midiSequence,
+    ...(args.fingerprint ? { fingerprint: { hash: args.fingerprint } } : {}),
+  });
+}
+
 // Step 4 — acoustic extraction (raw audio) + ranked final report.
 export function stepReport<C>(
   runtime: Runtime<C>,
@@ -72,10 +86,16 @@ export function stepReport<C>(
     commercial_deltas: CommercialDelta[];
   },
 ): Deferred<ReportResponse> {
-  return backendPost<C, ReportResponse>(runtime, baseUrl, "/api/report", {
-    audioFile: args.audioRef,
-    midiSequence: args.midiSequence,
-    registry_matches: args.registry_matches,
-    commercial_deltas: args.commercial_deltas,
-  });
+  return backendPost<C, ReportResponse>(
+    runtime,
+    baseUrl,
+    "/api/report",
+    {
+      audioFile: args.audioRef,
+      midiSequence: args.midiSequence,
+      registry_matches: args.registry_matches,
+      commercial_deltas: args.commercial_deltas,
+    },
+    85_000,
+  );
 }

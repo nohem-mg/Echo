@@ -1,7 +1,7 @@
 """Integration test: real BasicPitch model, real audio files.
 
 Loads real fixtures from tests/resources/ (a C major arpeggio), in both WAV and
-MP3, and checks end-to-end transcription via /convert.
+MP3, and checks end-to-end transcription via /api/convert.
 Skipped automatically if basic-pitch is not installed.
 """
 
@@ -34,7 +34,7 @@ def test_convert_real_audio(real_client, filename):
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
     with path.open("rb") as f:
-        r = real_client.post("/convert", files={"file": (filename, f, mime)})
+        r = real_client.post("/api/convert", files={"file": (filename, f, mime)})
 
     assert r.status_code == 200, r.text
     seq = r.json()["midi_sequence"]

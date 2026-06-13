@@ -34,13 +34,81 @@ services:
         required: false
     restart: unless-stopped
 
+  midi-similarity-service:
+    build:
+      context: .
+      dockerfile: services/midi-similarity-service/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      # Pure compute: reads the registry over HTTP, owns no data.
+      ECHO_MIDI_REGISTRY_URL: http://registry-service:8004
+    env_file:
+      - path: ./services/midi-similarity-service/.env
+        required: false
+    depends_on:
+      - registry-service
+    restart: unless-stopped
+
+  registry-service:
+    build:
+      context: .
+      dockerfile: services/registry-service/Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      # Owns the private registry; points at the compose Postgres service.
+      ECHO_REGISTRY_DATABASE_URL: postgresql://echo:echo@registry-db:5432/echo
+    env_file:
+      - path: ./services/registry-service/.env
+        required: false
+    depends_on:
+      registry-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  report-service:
+    build:
+      context: .
+      dockerfile: services/report-service/Dockerfile
+    ports:
+      - "8005:8005"
+    env_file:
+      - path: ./services/report-service/.env
+        required: false
+    restart: unless-stopped
+
   soundcloud-service:
     build:
       context: .
       dockerfile: services/soundcloud-service/Dockerfile
     ports:
-      - "8003:8003"
+      - "8006:8006"
     env_file:
       - path: ./services/soundcloud-service/.env
         required: false
     restart: unless-stopped
+
+  registry-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: echo
+      POSTGRES_PASSWORD: echo
+      POSTGRES_DB: echo
+    # Published to the host for local psql / host-side integration tests.
+    # Services reach it internally as registry-db:5432 regardless.
+    ports:
+      - "5432:5432"
+    volumes:
+      - registry-data:/var/lib/postgresql/data
+      # Schema is owned by the DB: every *.sql here runs once on first init.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U echo -d echo" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  registry-data:

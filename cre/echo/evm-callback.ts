@@ -18,14 +18,32 @@ export function dispatchOnChainCallback<C>(
   registryAddress: string,
   report: Report,
   gasLimit = DEFAULT_WRITE_REPORT_GAS_LIMIT,
-): void {
+): string | undefined {
   const evm = new EVMClient(SEPOLIA_CHAIN_SELECTOR);
-  evm.writeReport(runtime, {
+  const result = evm.writeReport(runtime, {
     receiver: registryAddress,
     report,
     gasConfig: { gasLimit },
-  }).result();
+  }).result() as unknown;
+  const txHash = extractTxHash(result);
   runtime.log(
-    `CRE → Registry.onReport dispatched (gas ${gasLimit}, ${registryAddress.slice(0, 10)}…)`,
+    `CRE → Registry.onReport dispatched (gas ${gasLimit}, ${registryAddress.slice(0, 10)}${txHash ? `, tx ${txHash.slice(0, 12)}…` : ""})`,
   );
+  return txHash;
+}
+
+function extractTxHash(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["transactionHash", "txHash", "hash"]) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && /^0x[0-9a-fA-F]{64}$/.test(candidate)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
 }
