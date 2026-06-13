@@ -16,7 +16,7 @@ const PORT = Number(process.env.ECHO_GATEWAY_PORT ?? 8080);
 const BASIC_PITCH_URL = process.env.ECHO_BASIC_PITCH_URL ?? "http://127.0.0.1:8001";
 const DEV_AUDIO = join(
   dirname(fileURLToPath(import.meta.url)),
-  "../services/basic-pitch-service/tests/resources/arpeggio.wav",
+  "../fixtures/audio/arpeggio.wav",
 );
 
 const ATTESTATION_HEADER = "x-chainlink-confidential-attestation";

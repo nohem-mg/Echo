@@ -46,6 +46,8 @@ export type Config = {
    * TODO: replace placeholder once Cyriac deploys the Registry contract.
    */
   registryAddress?: string;
+  /** Gas limit for EVMClient.writeReport (MockKeystoneForwarder routing). */
+  writeReportGasLimit?: string;
 };
 
 // Minimal logger so the core DAG logic stays decoupled from the CRE runtime.
@@ -89,7 +91,12 @@ const finalizeResult = (
   // Dispatch on-chain when Cyriac provides a real Registry address (not zero / placeholder).
   const registry = runtime.config.registryAddress?.toLowerCase();
   if (registry && registry !== "0x0000000000000000000000000000000000000000") {
-    dispatchOnChainCallback(runtime, runtime.config.registryAddress!, report);
+    dispatchOnChainCallback(
+      runtime,
+      runtime.config.registryAddress!,
+      report,
+      runtime.config.writeReportGasLimit,
+    );
   }
 
   // PipelineResult.callback is only set for CLEAN (the SEALED entry on-chain).

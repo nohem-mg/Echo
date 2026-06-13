@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-contract Registry {
+/// @dev Chainlink CRE KeystoneForwarder consumer interface (IReceiver).
+interface IReceiver {
+    function onReport(bytes calldata metadata, bytes calldata report) external;
+}
+
+contract Registry is IReceiver {
 
     enum Status { SEALED, REVEALED, SIMILAR, REJECTED }
 
@@ -27,6 +32,7 @@ contract Registry {
     error TrackNotFound();
     error NotArtist();
     error InvalidStatus();
+    error InvalidForwarder();
 
     constructor(address _creAddress) {
         creAddress = _creAddress;
@@ -54,7 +60,14 @@ contract Registry {
         emit TrackRegistered(msg.sender, trackId, commitmentHash, block.timestamp);
     }
 
-    /// @notice Chainlink CRE forwarder entry point — writes the final verdict.
+    /// @inheritdoc IReceiver
+    /// @notice Primary CRE entry point — MockKeystoneForwarder / KeystoneForwarder call onReport().
+    function onReport(bytes calldata /* metadata */, bytes calldata report) external override {
+        if (msg.sender != creAddress) revert InvalidForwarder();
+        _applyVerdict(report);
+    }
+
+    /// @notice Legacy forwarder entry point (route API) — kept for compatibility.
     function route(
         bytes32 /* transmissionId */,
         address /* transmitter */,
@@ -62,10 +75,17 @@ contract Registry {
         bytes calldata /* metadata */,
         bytes calldata validatedReport
     ) external returns (bool) {
-        require(msg.sender == creAddress, "Only CRE forwarder");
+        if (msg.sender != creAddress) revert InvalidForwarder();
+        _applyVerdict(validatedReport);
+        return true;
+    }
 
-        // Skip the 2-byte reportId prepended by the CRE forwarder
-        bytes calldata payload = validatedReport[2:];
+    /// @dev ERC-165: MockKeystoneForwarder checks IReceiver before delivering reports.
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == type(IReceiver).interfaceId || interfaceId == 0x01ffc9a7;
+    }
+
+    function _applyVerdict(bytes calldata payload) internal {
         (bytes32 trackId, uint8 verdictRaw) = abi.decode(payload, (bytes32, uint8));
 
         if (entries[trackId].timestamp == 0) revert TrackNotFound();
@@ -73,8 +93,6 @@ contract Registry {
         Status verdict = Status(verdictRaw);
         entries[trackId].status = verdict;
         emit StatusUpdated(trackId, verdict);
-
-        return true;
     }
 
     function revealTrack(bytes32 trackId, bytes32 fullProfileHash) external {
