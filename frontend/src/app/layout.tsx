@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Instrument_Serif, Permanent_Marker, Space_Grotesk } from "next/font/google";
 import "./globals.css";
+import Providers from "./providers";
 
 const spaceGrotesk = Space_Grotesk({
   variable: "--font-space",
@@ -44,7 +45,7 @@ export default function RootLayout({
       className={`${spaceGrotesk.variable} ${geistMono.variable} ${instrumentSerif.variable} ${permanentMarker.variable} h-full antialiased`}
     >
       <body className="min-h-full" suppressHydrationWarning>
-        {children}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
