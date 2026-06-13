@@ -23,14 +23,14 @@ class MidiSimilarityService:
         self._s = settings
 
     async def register(self, track_id: str, midi: MidiSequence) -> None:
-        """Add a track's melodic line to the private registry."""
-        await self._store.add(track_id, skyline_intervals(midi))
+        """Store the full MIDI (source of truth) + its precomputed intervals (cached feature)."""
+        await self._store.add(track_id, midi.model_dump(), skyline_intervals(midi))
 
     async def compare(self, midi: MidiSequence) -> list[RegistryMatch]:
         """Score the submission against every registered track (full scan; small registry)."""
         query = skyline_intervals(midi)
         matches: list[RegistryMatch] = []
-        for track_id, intervals in await self._store.all():
+        for track_id, intervals in await self._store.all_intervals():
             s = score_intervals(query, intervals)
             if s.similarity >= self._s.similarity_floor:
                 matches.append(

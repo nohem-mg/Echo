@@ -57,8 +57,14 @@ services:
       POSTGRES_USER: echo
       POSTGRES_PASSWORD: echo
       POSTGRES_DB: echo
+    # Published to the host for local psql / host-side integration tests.
+    # Services reach it internally as registry-db:5432 regardless.
+    ports:
+      - "5432:5432"
     volumes:
       - registry-data:/var/lib/postgresql/data
+      # Schema is owned by the DB: every *.sql here runs once on first init.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U echo -d echo"]
       interval: 5s

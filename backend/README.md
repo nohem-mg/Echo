@@ -13,11 +13,12 @@ backend/
 │   └── echo-common/            # shared: error envelope, JSON logging, audio validation,
 │                               #         app factory (/health + middleware), MIDI contract
 └── services/
-    ├── basic-pitch-service/    # Step 1  — audio -> MIDI            (port 8001)
-    └── acrcloud-service/       # Step 2A — fingerprint vs ACRCloud  (port 8002)
+    ├── basic-pitch-service/      # Step 1  — audio -> MIDI                  (port 8001)
+    ├── acrcloud-service/         # Step 2A — fingerprint vs ACRCloud        (port 8002)
+    └── midi-similarity-service/  # Step 2B — composition vs private registry (port 8003)
 ```
 
-Still to come: Step 2B (midi-similarity), Step 3 (commercial compare), Step 4 (report),
+Still to come: Step 3 (commercial disambiguation, see `docs/adr/0001`), Step 4 (report),
 storage (Walrus). Each is a new folder under `services/` reusing `echo-common`.
 
 ## Run everything (Docker)
