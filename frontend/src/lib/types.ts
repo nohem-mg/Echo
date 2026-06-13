@@ -43,6 +43,30 @@ export type EchoPipelineStep = {
   updatedAt: string;
 };
 
+export type EchoSimilarTrack = {
+  rank: number;
+  title: string;
+  source: string;
+  score: number;
+  melody: number;
+  rhythm: number;
+  structure: number;
+  key: string;
+  BPM?: number;
+};
+
+export type EchoReport = {
+  verdict: "CLEAN" | "SIMILAR" | "REJECTED";
+  submitted_track?: {
+    key?: string;
+    mode?: string;
+    BPM?: number;
+    fingerprint?: string;
+  };
+  similar_tracks: EchoSimilarTrack[];
+  ai_summary?: string;
+};
+
 export type EchoFlow = {
   id: string;
   nullifierHash: string;
@@ -54,6 +78,10 @@ export type EchoFlow = {
   paymentAmountEth?: string;
   paymentChainId?: number;
   txHash?: `0x${string}`;
+  registryTrackId?: `0x${string}`;
+  registryTxHash?: `0x${string}`;
+  registryRef?: `0x${string}`;
+  report?: EchoReport;
   status: EchoFlowStatus;
   error?: string;
   createdAt: string;
