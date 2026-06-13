@@ -61,27 +61,17 @@ contract Registry {
     }
 
     /// @notice Chainlink CRE callback — writes the final verdict.
-    function route(
-        bytes32 /* transmissionId */,
-        address /* transmitter */,
-        address /* receiver */,
-        bytes calldata /* metadata */,
-        bytes calldata validatedReport
-    ) external returns (bool) {
-        require(msg.sender == creAddress, "Only CRE forwarder");
-
-        (bytes32 trackId, uint8 verdictStatus) = abi.decode(
-            validatedReport, (bytes32, uint8)
-        );
-
+    /// @param trackId  Track ID
+    /// @param verdict  0=SEALED 1=REVEALED 2=SIMILAR 3=REJECTED
+    /// @dev   attestation  Confidential AI attestation — verification not yet implemented (TODO)
+    function receiveCRECallback(
+        bytes32 trackId,
+        Status  verdict,
+        bytes calldata /* attestation */ // TODO: verify Chainlink attestation (IMP)
+    ) external onlyCRE {
         if (entries[trackId].timestamp == 0) revert TrackNotFound();
-        if (verdictStatus > uint8(Status.REJECTED)) revert InvalidStatus();
-
-        Status verdict = Status(verdictStatus);
         entries[trackId].status = verdict;
         emit StatusUpdated(trackId, verdict);
-
-        return true;
     }
 
     function revealTrack(bytes32 trackId, bytes32 fullProfileHash) external {

@@ -896,7 +896,7 @@ export default function Home() {
 
       const txHash = await registerTrackContract({
         address: echoConfig.registryAddress as `0x${string}`,
-        abi: registryAbi,
+        abi: registryAbi as any,
         functionName: "registerTrack",
         args: [nullifierBigInt, hashHex as `0x${string}`, mockRegistryRef as `0x${string}`],
       });
@@ -923,7 +923,7 @@ export default function Home() {
 
       const txHash = await revealTrackContract({
         address: echoConfig.registryAddress as `0x${string}`,
-        abi: registryAbi,
+        abi: registryAbi as any,
         functionName: "revealTrack",
         args: [mockTrackId as `0x${string}`, mockProfileHash as `0x${string}`],
       });
