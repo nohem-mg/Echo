@@ -15,7 +15,7 @@ import type {
 // Test helpers
 // -------------------------------------------------------------------------
 const INPUT: PipelineInput = {
-  audioRef: "walrus://blob/test",
+  audioRef: "https://echo-backend.local/audio/test",
   commitmentHash: "0xabc",
   worldNullifier: "0xdef",
   trackId: "0x0000000000000000000000000000000000000000000000000000000000000001",

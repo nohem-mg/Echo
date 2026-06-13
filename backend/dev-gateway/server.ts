@@ -1,18 +1,21 @@
 /**
  * Echo dev API gateway — bridges the CRE contract (:8080) to the microservices.
  *
- * The CRE calls one backend (:8080) with 5 JSON routes; each maps to a service:
- *   POST /api/convert          { audioFile }   → basic-pitch    :8001  /convert
+ * The CRE calls one backend (:8080) with JSON routes; each maps to a service:
+ *   POST /api/convert          { audioFile }   → basic-pitch    :8001  /api/convert
  *   POST /api/check/public     { audioFile }   → acrcloud       :8002  /api/check/public
  *   POST /api/compare/private  { midiSequence }→ midi-similarity:8003  /api/compare/private
+ *   POST /api/registry         { track_id, … } → registry       :8004  /api/registry   (SEAL)
  *   POST /api/compare/commercial               → (mock — service not built yet)
  *   POST /api/report                           → (mock — service not built yet)
  *
  * Contract translation:
  *   - audioRef is resolved to bytes: a signed http(s) URL is fetched for real; any
  *     other ref falls back to the shared dev fixture, logged as a stand-in.
- *   - midiSequence arrives as a JSON string (convert's output); compare wants an object,
- *     so we parse it before forwarding.
+ *   - midiSequence arrives as a JSON string (convert's output); compare/registry want
+ *     an object, so we parse it before forwarding.
+ *   - check/public: only matches >= 50% are forwarded (AGENTS.md), normalised to
+ *     { ISRC, confidence_score }; cover_matches passed through for downstream use.
  *
  * Run (host):  bun backend/dev-gateway/server.ts   (services up: cd backend && docker compose up)
  */
@@ -51,7 +54,13 @@ const healthy = async (baseUrl: string): Promise<boolean> => {
 };
 
 /** Resolve an audioRef to bytes. A signed http(s) URL is fetched for real; any other
- *  ref falls back to the shared dev fixture (logged), so the pipeline stays runnable. */
+ *  ref falls back to the shared dev fixture (logged), so the pipeline stays runnable.
+ *
+ *  NOTE — confidentiality: fetching a hosted URL means the audio was put on a server,
+ *  which is NOT the confidential path (the raw audio must never be exposed before the
+ *  artist's REVEAL). URL-fetch here is a DEV/TEST convenience only. The faithful path is
+ *  a direct multipart upload straight into the service (in-memory, temp file deleted
+ *  after processing, never persisted) — in prod the audio stays inside the TEE. */
 const resolveAudio = async (audioRef: string): Promise<{ bytes: Uint8Array; filename: string }> => {
   if (audioRef.startsWith("http://") || audioRef.startsWith("https://")) {
     const res = await fetch(audioRef, { signal: AbortSignal.timeout(15000) });
@@ -87,14 +96,23 @@ const postJson = async (baseUrl: string, path: string, body: unknown): Promise<a
 const proxyConvert = async (audioFile: string) => {
   const body = (await postAudio(BASIC_PITCH_URL, "/api/convert", audioFile)) as { midi_sequence: unknown };
   console.log(`[gateway] convert via basic-pitch (audioRef=${audioFile.slice(0, 32)}…)`);
-  return { midiSequence: JSON.stringify(body.midi_sequence) };
+  return { midiSequence: JSON.stringify(body.midi_sequence) }; // CRE contract: { midiSequence: string }
 };
 
 // Step 2A — acoustic fingerprint. CRE reads matches[].{ISRC, confidence_score}.
 const proxyCheckPublic = async (audioFile: string) => {
-  const body = await postAudio(ACRCLOUD_URL, "/api/check/public", audioFile);
-  console.log(`[gateway] check/public via acrcloud (audioRef=${audioFile.slice(0, 32)}…)`);
-  return body; // { matches, cover_matches, request_id } — CRE ignores extra fields
+  const body = (await postAudio(ACRCLOUD_URL, "/api/check/public", audioFile)) as {
+    matches: Array<{ ISRC: string | null; confidence_score: number }>;
+    cover_matches?: Array<{ ISRC: string | null; confidence_score: number }>;
+  };
+  console.log(`[gateway] check/public via acrcloud (${body.matches.length} matches, audioRef=${audioFile.slice(0, 32)}…)`);
+  return {
+    // AGENTS.md: never return below 50%. Normalised to the CRE contract shape.
+    matches: body.matches
+      .filter((m) => m.confidence_score >= 50)
+      .map((m) => ({ ISRC: m.ISRC ?? "", confidence_score: m.confidence_score })),
+    cover_matches: body.cover_matches ?? [], // melodic candidates, passed through
+  };
 };
 
 // Step 2B — compositional similarity. midiSequence is a JSON string → parse → forward.
@@ -150,6 +168,7 @@ Bun.serve({
   async fetch(req) {
     const { pathname } = new URL(req.url);
 
+    // -- Health ---------------------------------------------------------------
     if (pathname === "/health") {
       const [bp, acr, midi, reg] = await Promise.all([
         healthy(BASIC_PITCH_URL),
@@ -166,6 +185,7 @@ Bun.serve({
       });
     }
 
+    // -- Step 1: /api/convert -------------------------------------------------
     if (pathname === "/api/convert" && req.method === "POST") {
       const { audioFile } = (await req.json()) as { audioFile?: string };
       if (!audioFile) return json({ code: "validation_error", message: "audioFile required" }, 422);
@@ -177,6 +197,7 @@ Bun.serve({
       }
     }
 
+    // -- Step 2A: /api/check/public -------------------------------------------
     if (pathname === "/api/check/public" && req.method === "POST") {
       const { audioFile } = (await req.json()) as { audioFile?: string };
       if (!audioFile) return json({ code: "validation_error", message: "audioFile required" }, 422);
@@ -184,10 +205,13 @@ Bun.serve({
       try {
         return json(await proxyCheckPublic(audioFile));
       } catch (err) {
-        return upstreamError(err);
+        // Service up but errored (e.g. missing ACRCloud credentials) — fall back to mock.
+        console.warn("[gateway] acrcloud proxy failed, falling back to mock:", String(err));
+        return json(mockCheckPublic());
       }
     }
 
+    // -- Step 2B: /api/compare/private ----------------------------------------
     if (pathname === "/api/compare/private" && req.method === "POST") {
       const { midiSequence } = (await req.json()) as { midiSequence?: string };
       if (!midiSequence) return json({ code: "validation_error", message: "midiSequence required" }, 422);
@@ -199,6 +223,7 @@ Bun.serve({
       }
     }
 
+    // -- SEAL: /api/registry --------------------------------------------------
     if (pathname === "/api/registry" && req.method === "POST") {
       const payload = (await req.json()) as { track_id?: string; midiSequence?: string; fingerprint?: unknown };
       if (!payload.track_id || !payload.midiSequence) {
@@ -212,6 +237,7 @@ Bun.serve({
       }
     }
 
+    // -- Steps 3 / 4: mocked until the services exist -------------------------
     const mock = mockRoutes[pathname];
     if (mock && req.method === "POST") {
       await req.text();

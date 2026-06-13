@@ -2,5 +2,6 @@
   "backendBaseUrl": "http://127.0.0.1:8080",
   "useConfidentialHttp": true,
   "secretsOwner": "",
-  "registryAddress": "0x52eE9af7918c69Ab4DC08b9C0b2a82C24Fd6DC6C"
+  "registryAddress": "0xf011Bb61C7F255571F96FB29cf7b8c7B85FB2Cc0",
+  "writeReportGasLimit": "500000"
 }

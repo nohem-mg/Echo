@@ -37,7 +37,7 @@ export function stepCheckPublic<C>(
   });
 }
 
-// Step 2B — MIDI algo: comparison vs private registry (Walrus).
+// Step 2B — MIDI algo: comparison vs private registry (PostgreSQL).
 export function stepComparePrivate<C>(
   runtime: Runtime<C>,
   baseUrl: string,

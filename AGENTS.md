@@ -31,7 +31,7 @@
 ## Network
 
 - Chain: Ethereum Sepolia (chain ID 11155111)
-- Registry contract: `0x52eE9af7918c69Ab4DC08b9C0b2a82C24Fd6DC6C`
+- Registry contract: `0xd2A1ec2a6Ef3973A1519E9aaf0A77c01955E0f72`
 - ABI: `contracts/out/Registry.sol/Registry.json`
 
 ---
@@ -66,8 +66,9 @@
 
 ### backend/ — Express / Next.js / Python
 
-- Store MIDI sequences encrypted in PostgreSQL. Do not use Walrus.
-- `registryRef` passed to `registerTrack` must be `keccak256` of the MIDI entry's primary key in the DB.
+- Store private registry tracks and melodic intervals in PostgreSQL (`registry-db` service) instead of Walrus.
+- `registryRef` passed to `registerTrack` must be `keccak256(track_id)`.
+- Database access: Schema is managed by the database container itself; applications perform data access only. Direct database access is restricted to the similarity service API (`POST /api/registry` and `POST /api/compare/private`); the CRE does not connect to the database.
 - `commitmentHash` must be computed as `keccak256(abi.encodePacked(fingerprint, profileJSON))` before calling `registerTrack`.
 - World ID proof validation: call `POST /api/v4/verify/{rp_id}` on the Developer Portal before passing the nullifier to the frontend.
 - Never return confidence scores below 50 % from `/api/check/public` — filter them out before responding.
@@ -78,13 +79,13 @@
 
 ### Backend → CRE
 
-| Endpoint | Input | Output |
-|---|---|---|
-| `POST /api/convert` | `{ audioFile }` | `{ midiSequence }` |
-| `POST /api/check/public` | `{ audioFile }` | `{ matches: [{ ISRC, confidence_score }] }` |
-| `POST /api/compare/private` | `{ midiSequence }` | `{ registry_matches: [{ track_id, similarity_score }] }` |
-| `POST /api/compare/commercial` | `{ midiSequence, ISRCs[] }` | `{ commercial_deltas: [{ ISRC, melodic, rhythmic, structural }] }` |
-| `POST /api/report` | `{ audioFile, midiSequence, registry_matches, commercial_deltas }` | `{ verdict, submitted_track, similar_tracks[], ai_summary }` |
+| Endpoint                       | Input                                                              | Output                                                             |
+| --------------------------------| --------------------------------------------------------------------| --------------------------------------------------------------------|
+| `POST /api/convert`            | `{ audioFile }`                                                    | `{ midiSequence }`                                                 |
+| `POST /api/check/public`       | `{ audioFile }`                                                    | `{ matches: [{ ISRC, confidence_score }] }`                        |
+| `POST /api/compare/private`    | `{ midiSequence }`                                                 | `{ registry_matches: [{ track_id, similarity_score }] }`           |
+| `POST /api/compare/commercial` | `{ midiSequence, ISRCs[] }`                                        | `{ commercial_deltas: [{ ISRC, melodic, rhythmic, structural }] }` |
+| `POST /api/report`             | `{ audioFile, midiSequence, registry_matches, commercial_deltas }` | `{ verdict, submitted_track, similar_tracks[], ai_summary }`       |
 
 ### CRE → Contract
 

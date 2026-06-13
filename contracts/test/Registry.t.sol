@@ -40,24 +40,28 @@ contract RegistryTest is Test {
         registry.registerTrack(nullifier, keccak256("other"), registryRef);
     }
 
-    function test_route_wrongCaller_reverts() public {
+    function test_onReport_wrongCaller_reverts() public {
         bytes32 trackId = _register(artist);
         bytes memory report = abi.encode(trackId, uint8(2));
 
         vm.prank(hacker);
         vm.expectRevert("Only CRE forwarder");
-        registry.route(bytes32(0), address(0), address(0), "", report);
+        registry.onReport("", report);
     }
 
-    function test_route_success() public {
+    function test_onReport_success() public {
         bytes32 trackId = _register(artist);
         bytes memory report = abi.encode(trackId, uint8(2));
 
         vm.prank(cre);
-        bool ok = registry.route(bytes32(0), address(0), address(0), "", report);
+        registry.onReport("", report);
 
-        assertTrue(ok);
         assertEq(uint8(registry.getEntry(trackId).status), uint8(Registry.Status.SIMILAR));
+    }
+
+    function test_supportsInterface_receiver() public view {
+        bytes4 receiverInterfaceId = bytes4(keccak256("onReport(bytes,bytes)"));
+        assertTrue(registry.supportsInterface(receiverInterfaceId));
     }
 
     function test_revealTrack_byArtist_success() public {

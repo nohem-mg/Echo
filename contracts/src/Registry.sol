@@ -13,6 +13,9 @@ contract Registry {
         bytes32 registryRef;
     }
 
+    bytes4 private constant RECEIVER_INTERFACE_ID =
+        bytes4(keccak256("onReport(bytes,bytes)"));
+
     address public immutable creAddress;
 
     mapping(bytes32  => Entry)     public entries;
@@ -27,6 +30,7 @@ contract Registry {
     error TrackNotFound();
     error NotArtist();
     error InvalidStatus();
+    error InvalidForwarder();
 
     constructor(address _creAddress) {
         creAddress = _creAddress;
@@ -54,18 +58,14 @@ contract Registry {
         emit TrackRegistered(msg.sender, trackId, commitmentHash, block.timestamp);
     }
 
-    /// @notice Chainlink CRE forwarder entry point — writes the final verdict.
-    function route(
-        bytes32 /* transmissionId */,
-        address /* transmitter */,
-        address /* receiver */,
+    function onReport(
         bytes calldata /* metadata */,
-        bytes calldata validatedReport
-    ) external returns (bool) {
+        bytes calldata rawReport
+    ) external {
         require(msg.sender == creAddress, "Only CRE forwarder");
 
         (bytes32 trackId, uint8 verdictRaw) = abi.decode(
-            validatedReport, (bytes32, uint8)
+            rawReport, (bytes32, uint8)
         );
 
         if (entries[trackId].timestamp == 0) revert TrackNotFound();
@@ -73,9 +73,13 @@ contract Registry {
         Status verdict = Status(verdictRaw);
         entries[trackId].status = verdict;
         emit StatusUpdated(trackId, verdict);
-
-        return true;
     }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == RECEIVER_INTERFACE_ID;
+    }
+
+
 
     function revealTrack(bytes32 trackId, bytes32 fullProfileHash) external {
         Entry storage entry = entries[trackId];
