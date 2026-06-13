@@ -1,6 +1,10 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { IDKit, orbLegacy, type IDKitResult } from "@worldcoin/idkit-core";
+import Image from "next/image";
+import QRCode from "qrcode";
 import {
   ArrowUpRight,
   Check,
@@ -13,15 +17,27 @@ import {
   LockKeyhole,
   Pause,
   Play,
+  QrCode as QrCodeIcon,
   Radio,
   ShieldCheck,
   Sparkles,
   Upload,
-  Wallet,
+  WalletCards,
   Waves,
+  X,
 } from "lucide-react";
+import { isAddress, parseEther, toHex } from "viem";
+import { useAccount, useChainId, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt } from "wagmi";
+import { sepolia } from "wagmi/chains";
+import { echoConfig, isWorldConfigured } from "@/lib/config";
+import type { EchoFlow, EchoPayment, PaymentCreateResponse, WorldVerification } from "@/lib/types";
 
 type StepState = "idle" | "active" | "done" | "blocked";
+
+type WorldQrState = {
+  connectorURI: string;
+  imageDataUrl: string;
+};
 
 const pipelineSteps = [
   {
@@ -89,10 +105,10 @@ const matches = [
   },
 ];
 
-const sponsors = ["World ID", "Chainlink CRE", "Confidential AI", "Unlink", "Walrus", "Base Sepolia"];
+const sponsors = ["World ID", "RainbowKit", "ETH Sepolia", "Chainlink CRE", "Confidential AI", "Unlink", "Walrus"];
 
-function getStepState(index: number, hasFile: boolean): StepState {
-  if (!hasFile) {
+function getStepState(index: number, hasFile: boolean, pipelineStarted: boolean): StepState {
+  if (!hasFile || !pipelineStarted) {
     return "idle";
   }
 
@@ -119,9 +135,77 @@ function scoreTone(score: number) {
   return "text-[#9ef7c9]";
 }
 
+function createMockProof(action: string): IDKitResult {
+  return {
+    protocol_version: "3.0",
+    nonce: `mock-${crypto.randomUUID()}`,
+    action,
+    environment: "staging",
+    user_presence_completed: true,
+    responses: [
+      {
+        identifier: "orb",
+        signal_hash: "0xmock_signal",
+        proof: "0xmock_proof",
+        merkle_root: "0xmock_root",
+        nullifier: `0x${crypto.randomUUID().replaceAll("-", "")}`,
+      },
+    ],
+  };
+}
+
+function getProofNullifier(result: IDKitResult) {
+  const firstResponse = result.responses[0];
+
+  if (!firstResponse) {
+    return "";
+  }
+
+  if ("nullifier" in firstResponse) {
+    return firstResponse.nullifier;
+  }
+
+  if ("session_nullifier" in firstResponse) {
+    return firstResponse.session_nullifier[0] ?? "";
+  }
+
+  return "";
+}
+
+async function createAudioFingerprint(file: File) {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `sha256:${hash}`;
+}
+
 export default function Home() {
   const [audioName, setAudioName] = useState("");
+  const [trackFingerprint, setTrackFingerprint] = useState("");
+  const [flow, setFlow] = useState<EchoFlow | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [verification, setVerification] = useState<WorldVerification>({ status: "idle" });
+  const [payment, setPayment] = useState<EchoPayment>({ status: "idle" });
+  const [pendingQuote, setPendingQuote] = useState<PaymentCreateResponse | null>(null);
+  const [pipelineStarted, setPipelineStarted] = useState(false);
+  const [worldQr, setWorldQr] = useState<WorldQrState | null>(null);
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
+  const { sendTransactionAsync, isPending: isSendingTransaction } = useSendTransaction();
+
+  const pendingPaymentHash = payment.status === "pending" ? payment.hash : undefined;
+  const pendingPaymentReference = payment.status === "pending" ? payment.reference : undefined;
+  const {
+    data: paymentReceipt,
+    error: paymentReceiptError,
+    isLoading: isConfirmingTransaction,
+  } = useWaitForTransactionReceipt({
+    hash: pendingPaymentHash,
+    chainId: sepolia.id,
+    query: {
+      enabled: Boolean(pendingPaymentHash),
+    },
+  });
 
   const selectedLabel = useMemo(() => {
     if (audioName) {
@@ -131,9 +215,386 @@ export default function Home() {
     return "Drop WAV / MP3";
   }, [audioName]);
 
-  function handleAudioSelect(event: ChangeEvent<HTMLInputElement>) {
+  const canVerify = Boolean(audioName && trackFingerprint && verification.status !== "pending");
+  const canPay = Boolean(audioName && verification.status === "verified" && verification.flow.id && isConnected && payment.status !== "pending" && payment.status !== "paid");
+  const flowStatus = useMemo(() => {
+    if (payment.status === "paid") {
+      return `Flow ${flow?.id.slice(0, 13) ?? "persisted"} · Sepolia fee paid · ${payment.hash.slice(0, 12)}...`;
+    }
+
+    if (payment.status === "pending") {
+      if (payment.hash) {
+        return `Waiting for Sepolia confirmation · ${payment.hash.slice(0, 12)}...`;
+      }
+
+      return "Waiting for wallet signature";
+    }
+
+    if (verification.status === "verified") {
+      if (!isConnected) {
+        return "World ID verified. Connect an EVM wallet to pay the Sepolia fee.";
+      }
+
+      if (chainId !== sepolia.id) {
+        return "World ID verified. Switch your wallet to Ethereum Sepolia.";
+      }
+
+      return `World ID verified ${verification.mode === "mock" ? "in demo mode" : "with proof"}`;
+    }
+
+    if (verification.status === "pending") {
+      return "Waiting for World ID proof";
+    }
+
+    if (!audioName) {
+      return "Drop a track to start the seal flow";
+    }
+
+    if (!trackFingerprint) {
+      return "Computing local audio fingerprint";
+    }
+
+    if (isWorldConfigured()) {
+      return "Verify World ID before payment";
+    }
+
+    return echoConfig.mockWorldEnabled ? "Demo mode enabled" : "World Developer Portal credentials required";
+  }, [audioName, chainId, flow?.id, isConnected, payment, trackFingerprint, verification]);
+
+  useEffect(() => {
+    if (payment.status !== "pending" || !paymentReceiptError) {
+      return;
+    }
+
+    const receiptErrorMessage = paymentReceiptError.message;
+    let cancelled = false;
+
+    async function markReceiptError() {
+      await Promise.resolve();
+
+      if (cancelled) {
+        return;
+      }
+
+      setPayment({
+        status: "error",
+        error: receiptErrorMessage,
+        reference: payment.reference,
+        hash: payment.hash,
+      });
+    }
+
+    markReceiptError();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [payment.hash, payment.reference, payment.status, paymentReceiptError]);
+
+  useEffect(() => {
+    if (!paymentReceipt || !pendingQuote || !pendingPaymentHash || !pendingPaymentReference || payment.status !== "pending") {
+      return;
+    }
+
+    const txHash = pendingPaymentHash;
+    const paymentReference = pendingPaymentReference;
+    const quoteReference = pendingQuote.reference;
+    const quoteFlowId = pendingQuote.flowId;
+    const receiptBlockNumber = paymentReceipt.blockNumber.toString();
+    let cancelled = false;
+
+    async function confirmPayment() {
+      try {
+        const confirmResponse = await fetch("/api/payments/confirm", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            flowId: quoteFlowId,
+            hash: txHash,
+            reference: paymentReference,
+            expectedFrom: address,
+          }),
+        });
+
+        if (!confirmResponse.ok) {
+          throw new Error("Sepolia payment was not confirmed");
+        }
+
+        const confirmed = (await confirmResponse.json()) as {
+          flow?: EchoFlow;
+          transaction?: {
+            blockNumber?: string;
+          };
+        };
+
+        if (cancelled) {
+          return;
+        }
+
+        if (confirmed.flow) {
+          setFlow(confirmed.flow);
+        }
+
+        setPayment({
+          status: "paid",
+          reference: quoteReference,
+          hash: txHash,
+          mode: "evm",
+          blockNumber: confirmed.transaction?.blockNumber ?? receiptBlockNumber,
+        });
+        setPipelineStarted(true);
+        setPendingQuote(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setPayment({
+          status: "error",
+          error: error instanceof Error ? error.message : "Sepolia payment confirmation failed",
+          reference: paymentReference,
+          hash: txHash,
+        });
+      }
+    }
+
+    confirmPayment();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [address, payment.status, paymentReceipt, pendingPaymentHash, pendingPaymentReference, pendingQuote]);
+
+  async function handleAudioSelect(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     setAudioName(file?.name ?? "");
+    setTrackFingerprint("");
+    setFlow(null);
+    setVerification({ status: "idle" });
+    setPipelineStarted(false);
+    setPayment({ status: "idle" });
+    setPendingQuote(null);
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      setTrackFingerprint(await createAudioFingerprint(file));
+    } catch {
+      setVerification({
+        status: "error",
+        error: "Could not compute local track fingerprint",
+      });
+    }
+  }
+
+  async function handleCopyFlowId() {
+    if (!flow?.id) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(flow.id);
+  }
+
+  async function handleVerifyWorld() {
+    setVerification({ status: "pending" });
+
+    try {
+      if (!isWorldConfigured()) {
+        if (!echoConfig.mockWorldEnabled) {
+          throw new Error("Missing NEXT_PUBLIC_WORLD_APP_ID or NEXT_PUBLIC_WORLD_RP_ID");
+        }
+
+        const mockProof = createMockProof(echoConfig.worldAction);
+        const response = await fetch("/api/world/verify", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            rp_id: "rp_mock",
+            idkitResponse: mockProof,
+            track: {
+              name: audioName,
+              fingerprint: trackFingerprint,
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Mock verification failed");
+        }
+
+        const verified = (await response.json()) as { flow?: EchoFlow };
+
+        if (!verified.flow) {
+          throw new Error("World ID passed, but flow persistence failed");
+        }
+
+        setFlowFromVerification(verified.flow);
+        setVerification({
+          status: "verified",
+          proof: mockProof,
+          nullifier: getProofNullifier(mockProof) || "0xmock_nullifier",
+          mode: "mock",
+          flow: verified.flow,
+        });
+        return;
+      }
+
+      const rpSignature = await fetch("/api/world/rp-signature", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: echoConfig.worldAction }),
+      }).then((response) => {
+        if (!response.ok) {
+          throw new Error("Could not create World ID request");
+        }
+
+        return response.json();
+      });
+
+      const request = await IDKit.requestWithInviteCode({
+        app_id: echoConfig.worldAppId as `app_${string}`,
+        action: echoConfig.worldAction,
+        rp_context: {
+          rp_id: echoConfig.worldRpId,
+          nonce: rpSignature.nonce,
+          created_at: rpSignature.created_at,
+          expires_at: rpSignature.expires_at,
+          signature: rpSignature.sig,
+        },
+        allow_legacy_proofs: true,
+        environment: echoConfig.worldEnvironment,
+      }).preset(orbLegacy({ signal: audioName || "echo-track" }));
+
+      if (request.connectorURI) {
+        const imageDataUrl = await QRCode.toDataURL(request.connectorURI, {
+          width: 360,
+          margin: 2,
+          color: {
+            dark: "#050505",
+            light: "#fff7cf",
+          },
+        });
+
+        setWorldQr({
+          connectorURI: request.connectorURI,
+          imageDataUrl,
+        });
+      }
+
+      const proofResult = await request.pollUntilCompletion({ timeout: 180_000 });
+
+      if (!proofResult.success) {
+        throw new Error(`World ID failed: ${proofResult.error}`);
+      }
+
+      const verifyResponse = await fetch("/api/world/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          rp_id: echoConfig.worldRpId,
+          idkitResponse: proofResult.result,
+          track: {
+            name: audioName,
+            fingerprint: trackFingerprint,
+          },
+        }),
+      });
+
+      if (!verifyResponse.ok) {
+        const errorBody = await verifyResponse.json().catch(() => null);
+        throw new Error(formatApiError(errorBody, "Backend rejected World ID proof"));
+      }
+
+      const verified = (await verifyResponse.json()) as { nullifier?: string; mode?: "world" | "mock"; flow?: EchoFlow };
+
+      if (!verified.flow) {
+        throw new Error("World ID passed, but flow persistence failed");
+      }
+
+      setFlowFromVerification(verified.flow);
+      setVerification({
+        status: "verified",
+        proof: proofResult.result,
+        nullifier: verified.nullifier ?? getProofNullifier(proofResult.result),
+        mode: verified.mode ?? "world",
+        flow: verified.flow,
+      });
+      setWorldQr(null);
+    } catch (error) {
+      setWorldQr(null);
+      setVerification({
+        status: "error",
+        error: error instanceof Error ? error.message : "World ID verification failed",
+      });
+    }
+  }
+
+  async function handlePayAndStart() {
+    if (!audioName || verification.status !== "verified" || payment.status === "pending" || payment.status === "paid") {
+      return;
+    }
+
+    if (!isConnected) {
+      setPayment({ status: "error", error: "Connect an EVM wallet before paying the Sepolia fee" });
+      return;
+    }
+
+    if (chainId !== sepolia.id) {
+      switchChain({ chainId: sepolia.id });
+      return;
+    }
+
+    try {
+      const paymentRequest = (await fetch("/api/payments/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ flowId: verification.flow.id }),
+      }).then((response) => {
+        if (!response.ok) {
+          throw new Error("Could not create Sepolia payment request");
+        }
+
+        return response.json();
+      })) as PaymentCreateResponse;
+
+      if (!isAddress(paymentRequest.receiver)) {
+        throw new Error("Invalid Sepolia fee receiver");
+      }
+
+      setFlow(paymentRequest.flow);
+      setPendingQuote(paymentRequest);
+      setPayment({ status: "pending", reference: paymentRequest.reference });
+
+      const hash = await sendTransactionAsync({
+        to: paymentRequest.receiver,
+        value: parseEther(paymentRequest.amountEth),
+        data: toHex(paymentRequest.reference),
+        chainId: paymentRequest.chainId,
+      });
+
+      setPayment({ status: "pending", reference: paymentRequest.reference, hash });
+    } catch (error) {
+      setPayment({
+        status: "error",
+        error: error instanceof Error ? error.message : "Sepolia payment failed",
+      });
+    }
+  }
+
+  function setFlowFromVerification(persistedFlow: EchoFlow) {
+    setFlow(persistedFlow);
+
+    if (persistedFlow.status === "pipeline_started" && persistedFlow.txHash && persistedFlow.paymentReference) {
+      setPayment({
+        status: "paid",
+        reference: persistedFlow.paymentReference,
+        hash: persistedFlow.txHash,
+        mode: "evm",
+      });
+      setPipelineStarted(true);
+    }
   }
 
   return (
@@ -150,10 +611,7 @@ export default function Home() {
             <span className="rounded-full border border-white/15 px-4 py-2">NYC 2026</span>
             <span className="rounded-full border border-white/15 px-4 py-2">Artist prior-art</span>
           </div>
-          <button className="inline-flex h-11 items-center gap-2 rounded-full bg-[#fff7cf] px-5 font-bold text-[#050505] transition hover:bg-white">
-            <Wallet className="size-4" aria-hidden="true" />
-            Connect
-          </button>
+          <WalletConnectControl tone="header" />
         </div>
       </div>
 
@@ -241,20 +699,76 @@ export default function Home() {
               </span>
             </label>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <button className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#fff7cf] px-5 font-black text-[#050505] transition hover:bg-white">
+            <div className="mt-5 grid gap-3 xl:grid-cols-3">
+              <button
+                className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#fff7cf] px-5 font-black text-[#050505] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!canVerify}
+                onClick={handleVerifyWorld}
+                type="button"
+              >
                 <Fingerprint className="size-5" aria-hidden="true" />
-                Verify World ID
+                {verification.status === "verified"
+                  ? "World ID OK"
+                  : verification.status === "pending"
+                    ? "Verifying..."
+                    : audioName && !trackFingerprint
+                      ? "Hashing..."
+                      : audioName
+                        ? "Verify World ID"
+                        : "Add track first"}
               </button>
-              <button className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#f59abd] px-5 font-black text-[#050505] transition hover:bg-[#ffb1ce]">
+              <WalletConnectControl tone="panel" />
+              <button
+                className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#f59abd] px-5 font-black text-[#050505] transition hover:bg-[#ffb1ce] disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={!canPay || isSendingTransaction || isConfirmingTransaction || isSwitchingChain}
+                onClick={handlePayAndStart}
+                type="button"
+              >
                 <ShieldCheck className="size-5" aria-hidden="true" />
-                Start seal
+                {payment.status === "paid"
+                  ? "Fee paid"
+                  : isSwitchingChain
+                    ? "Switching..."
+                    : chainId !== sepolia.id
+                      ? "Switch to Sepolia"
+                      : isSendingTransaction || isConfirmingTransaction || payment.status === "pending"
+                      ? "Confirming..."
+                      : "Pay Sepolia fee"}
               </button>
+            </div>
+
+            <div className="mt-4 rounded-[8px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/60">
+              <span className="font-bold text-white/80">Flow status:</span> {flowStatus}
+              {flow ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
+                  <span className="font-bold text-white/80">Flow ID:</span>
+                  <code className="max-w-full truncate rounded-full border border-white/10 bg-black/30 px-3 py-1 font-mono text-xs text-[#9ef7c9]">{flow.id}</code>
+                  <button
+                    className="inline-flex min-h-8 items-center gap-1 rounded-full border border-white/15 px-3 text-xs font-bold text-white/70 transition hover:border-[#f59abd] hover:text-[#f59abd]"
+                    onClick={handleCopyFlowId}
+                    type="button"
+                  >
+                    <Copy className="size-3.5" aria-hidden="true" />
+                    Copy
+                  </button>
+                  <a
+                    className="inline-flex min-h-8 items-center gap-1 rounded-full border border-white/15 px-3 text-xs font-bold text-white/70 transition hover:border-[#8fd5ff] hover:text-[#8fd5ff]"
+                    href={`/api/flows/${flow.id}`}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    API
+                    <ExternalLink className="size-3.5" aria-hidden="true" />
+                  </a>
+                </div>
+              ) : null}
+              {verification.status === "error" ? <span className="mt-1 block text-[#ff7777]">{verification.error}</span> : null}
+              {payment.status === "error" ? <span className="mt-1 block text-[#ff7777]">{payment.error}</span> : null}
             </div>
 
             <div className="mt-6 rounded-[8px] border border-white/10">
               {pipelineSteps.map((step, index) => (
-                <PipelineRow key={step.id} step={step} state={getStepState(index, Boolean(audioName))} />
+                <PipelineRow key={step.id} step={step} state={getStepState(index, Boolean(audioName), pipelineStarted)} />
               ))}
             </div>
           </div>
@@ -349,7 +863,7 @@ export default function Home() {
             <div className="mt-10 grid gap-4 sm:grid-cols-3">
               <CertificateMetric label="Commitment" value="0x8F...21C9" />
               <CertificateMetric label="Timestamp" value="Jun 13, 2026" />
-              <CertificateMetric label="Network" value="Base Sepolia" />
+              <CertificateMetric label="Registry" value={echoConfig.registryChainId === sepolia.id ? "Ethereum Sepolia" : `Chain ${echoConfig.registryChainId}`} />
             </div>
             <div className="mt-8 flex flex-wrap gap-3">
               <button className="inline-flex min-h-12 items-center gap-2 rounded-full bg-[#050505] px-5 font-black text-white transition hover:bg-[#202020]">
@@ -358,7 +872,7 @@ export default function Home() {
               </button>
               <button className="inline-flex min-h-12 items-center gap-2 rounded-full border border-[#050505]/20 px-5 font-black transition hover:border-[#050505]">
                 <ExternalLink className="size-4" aria-hidden="true" />
-                Basescan
+                Etherscan
               </button>
             </div>
           </div>
@@ -372,7 +886,7 @@ export default function Home() {
               <Disc3 className="size-10 text-[#8fd5ff]" aria-hidden="true" />
             </div>
             <div className="space-y-3">
-              {["SEALED entry is private", "Report attached to Walrus blob", "Reveal requires wallet confirmation"].map((item) => (
+              {["SEALED entry is private", "Report attached to Walrus blob", "Reveal requires wallet signature"].map((item) => (
                 <div className="flex min-h-14 items-center gap-3 rounded-[8px] border border-white/10 px-4" key={item}>
                   <span className="grid size-7 place-items-center rounded-full bg-[#9ef7c9] text-[#050505]">
                     <Check className="size-4" aria-hidden="true" />
@@ -388,6 +902,8 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {worldQr ? <WorldIdQrModal connectorURI={worldQr.connectorURI} imageDataUrl={worldQr.imageDataUrl} onClose={() => setWorldQr(null)} /> : null}
 
       <nav className="fixed inset-x-0 bottom-5 z-40 mx-auto flex w-fit max-w-[calc(100%-2rem)] items-center gap-1 rounded-full border border-white/10 bg-[#111]/90 p-1 shadow-2xl backdrop-blur-xl">
         <a className="rounded-full bg-white/10 px-5 py-3 font-display text-lg font-black" href="#top">
@@ -407,6 +923,135 @@ export default function Home() {
         </a>
       </nav>
     </main>
+  );
+}
+
+function formatApiError(body: unknown, fallback: string) {
+  if (!body || typeof body !== "object") {
+    return fallback;
+  }
+
+  const apiError = body as { error?: string; details?: unknown };
+
+  if (typeof apiError.details === "string") {
+    return `${apiError.error ?? fallback}: ${apiError.details}`;
+  }
+
+  if (apiError.details && typeof apiError.details === "object") {
+    return `${apiError.error ?? fallback}: ${JSON.stringify(apiError.details)}`;
+  }
+
+  return apiError.error ?? fallback;
+}
+
+function WorldIdQrModal({
+  connectorURI,
+  imageDataUrl,
+  onClose,
+}: {
+  connectorURI: string;
+  imageDataUrl: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/78 px-4 backdrop-blur-xl" role="dialog" aria-modal="true" aria-labelledby="world-id-title">
+      <div className="relative w-full max-w-[440px] rounded-[8px] border border-white/15 bg-[#050505] p-5 text-[#f8f6ee] shadow-2xl sm:p-6">
+        <button
+          className="absolute right-4 top-4 grid size-10 place-items-center rounded-full border border-white/15 text-white/70 transition hover:border-[#f59abd] hover:text-[#f59abd]"
+          onClick={onClose}
+          type="button"
+          aria-label="Close World ID QR"
+        >
+          <X className="size-5" aria-hidden="true" />
+        </button>
+
+        <div className="mb-5 flex items-center gap-3 pr-12">
+          <span className="grid size-12 place-items-center rounded-full bg-[#fff7cf] text-[#050505]">
+            <QrCodeIcon className="size-6" aria-hidden="true" />
+          </span>
+          <div>
+            <p className="text-sm uppercase text-white/45">World ID</p>
+            <h2 id="world-id-title" className="font-display text-2xl font-black">
+              Scan with World App
+            </h2>
+          </div>
+        </div>
+
+        <div className="rounded-[8px] border border-[#fff7cf]/40 bg-[#fff7cf] p-4">
+          <Image
+            className="mx-auto aspect-square w-full max-w-[320px]"
+            src={imageDataUrl}
+            alt="World ID verification QR code"
+            width={320}
+            height={320}
+            unoptimized
+          />
+        </div>
+
+        <div className="mt-5 rounded-[8px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/62">
+          Open World App, scan this code, then approve the proof. Echo will continue automatically once the proof is returned.
+        </div>
+
+        <a
+          className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-[#f59abd] px-5 font-black text-[#050505] transition hover:bg-[#ffb1ce]"
+          href={connectorURI}
+          rel="noreferrer"
+          target="_blank"
+        >
+          Open World App
+          <ArrowUpRight className="size-5" aria-hidden="true" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function WalletConnectControl({ tone }: { tone: "header" | "panel" }) {
+  const className =
+    tone === "header"
+      ? "inline-flex h-11 items-center gap-2 rounded-full bg-[#fff7cf] px-5 font-bold text-[#050505] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+      : "inline-flex min-h-14 items-center justify-center gap-2 rounded-full border border-white/15 px-5 font-black text-white transition hover:border-[#8fd5ff] hover:text-[#8fd5ff] disabled:cursor-not-allowed disabled:opacity-50";
+
+  return (
+    <ConnectButton.Custom>
+      {({ account, chain, mounted, openAccountModal, openChainModal, openConnectModal }) => {
+        const connected = mounted && account && chain;
+
+        if (!mounted) {
+          return (
+            <button className={className} disabled type="button">
+              <WalletCards className="size-4" aria-hidden="true" />
+              Connect wallet
+            </button>
+          );
+        }
+
+        if (!connected) {
+          return (
+            <button className={className} onClick={openConnectModal} type="button">
+              <WalletCards className="size-4" aria-hidden="true" />
+              Connect wallet
+            </button>
+          );
+        }
+
+        if (chain.unsupported || chain.id !== sepolia.id) {
+          return (
+            <button className={className} onClick={openChainModal} type="button">
+              <WalletCards className="size-4" aria-hidden="true" />
+              Wrong network
+            </button>
+          );
+        }
+
+        return (
+          <button className={className} onClick={openAccountModal} type="button">
+            <WalletCards className="size-4" aria-hidden="true" />
+            {tone === "header" ? account.displayName : `Sepolia · ${account.displayName}`}
+          </button>
+        );
+      }}
+    </ConnectButton.Custom>
   );
 }
 

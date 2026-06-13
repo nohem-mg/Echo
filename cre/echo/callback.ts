@@ -7,27 +7,27 @@
 
 import type { PipelineResult, Verdict } from "./types";
 
-/** Payload expected by Registry.receiveCRECallback(verdict, commitmentHash, attestation). */
+/**
+ * Payload dispatched to Registry.receiveCRECallback(trackId, Status, rawReport).
+ * Built for all non-ERROR verdicts once the DON-signed report is ready.
+ */
 export type RegistryCallbackPayload = {
-  verdict: Extract<Verdict, "CLEAN">;
-  commitmentHash: string;
-  /** Hex-encoded CRE rawReport bytes (DON-signed, verifiable on-chain). */
+  trackId: string;
+  verdict: Verdict;
+  /** Hex-encoded CRE rawReport bytes (DON-signed, verified on-chain by the forwarder). */
   attestation: string;
 };
 
-/**
- * Builds the on-chain callback payload when the pipeline completes with CLEAN
- * and a DON-signed attestation is present. Returns undefined for halts / errors.
- */
+/** Builds the callback payload for all non-ERROR verdicts. Returns undefined on ERROR. */
 export function buildRegistryCallback(
   result: PipelineResult,
 ): RegistryCallbackPayload | undefined {
-  if (result.verdict !== "CLEAN" || !result.attestation) {
+  if (result.verdict === "ERROR" || !result.attestation) {
     return undefined;
   }
   return {
-    verdict: "CLEAN",
-    commitmentHash: result.commitmentHash,
+    trackId: result.trackId,
+    verdict: result.verdict,
     attestation: result.attestation,
   };
 }

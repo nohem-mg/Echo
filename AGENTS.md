@@ -1,90 +1,106 @@
-# AGENTS.md — Echo
+# AGENTS.md — Echo / ETH Global New York 2026
 
-Guide de contexte pour tout agent IA travaillant sur ce repo.
-Source de vérité détaillée : [`docs/Echo_ETHGlobalNY2026_FR_v3.md`](./docs/Echo_ETHGlobalNY2026_FR_v3.md)
-et la répartition des tâches [`docs/Echo_Tasks_CNM.md`](./docs/Echo_Tasks_CNM.md).
+> Read this file fully before writing any code.
+> Full technical context: `docs/Echo_ETHGlobalNY2026_FR_v3.md`
+> Task breakdown: `docs/Echo_Tasks_CNM.md`
 
-## Le projet en une phrase
+---
 
-Registre open source de *prior-art* musical on-chain : une preuve d'antériorité
-**trustless, vérifiable, confidentielle et résistante au Sybil**, sans jamais exposer
-une track non sortie. Projet ETH Global New York 2026 (CNM Agency).
+## Hard rules — enforce these unconditionally
 
-## Propriétés à préserver (non négociables)
+- Never log, expose, or transmit raw audio or unreleased MIDI data.
+- Never write partial state on-chain. If the pipeline fails at any step, abort — nothing gets written.
+- Never commit `.env` or private keys. Use `.env.example` only.
+- Never commit or push without an explicit request from the developer.
+- Never modify a shared interface (ABI, HTTP endpoint, callback signature) without flagging it — all modules depend on each other.
+- Never bypass the DAG execution order or modify the fail-fast thresholds (95 % / 75 % / 50 %).
+- Never extract key, BPM, or acoustic fingerprint from MIDI. Always use raw audio.
+- Never use BasicPitch for comparison. BasicPitch converts audio to MIDI only — comparison is a separate cosine algorithm.
 
-- **Trustless** — aucun intermédiaire ne peut forger/altérer/supprimer un enregistrement.
-- **Vérifiable** — tout tiers peut confirmer indépendamment timestamp + empreinte on-chain.
-- **Confidentiel** — l'audio brut et les MIDI ne quittent jamais l'enclave (TEE) ; rien n'est divulgué avant le REVEAL choisi par l'artiste.
-- **Résistant au Sybil** — un humain = une inscription (World ID nullifier).
+---
 
-## Pipeline agentique — DAG fail-fast (cœur du système)
+## Before writing any code
 
-```
-Step 1  BasicPitch         audio -> MIDI (conversion seule, pas d'analyse)   [STOP si échec]
-Step 2  2A ∥ 2B (parallèle)
-        2A  ACRCloud        fingerprint acoustique vs base publique -> ISRC + confidence
-            >=95 % -> STOP (REJECTED, plagiat)  | 50-94 % -> Step 3  | <50 % -> Step 3 ignoré
-        2B  Algo MIDI       similarité compositionnelle vs registre privé (Walrus)
-            >=75 % -> STOP (SIMILAR)            | <75 % -> Step 4
-Step 3  (démarre dès 2A fini, n'attend pas 2B)
-        ISRC -> Spotify preview 30s -> BasicPitch -> comparaison MIDI vs commercial
-Step 4  (attend 2B ET 3)
-        Extraction clé/mode/BPM/empreinte depuis l'AUDIO BRUT + rapport final classé
-        verdict CLEAN -> SEAL on-chain | verdict SIMILAR -> rapport, aucune écriture
-```
+1. Identify which module you are working in: `frontend/`, `contracts/`, `cre/`, `backend/`.
+2. Read the corresponding section below for your module.
+3. Check the inter-module interfaces — if your change affects a shared interface, stop and flag it first.
+4. Run existing tests before and after your change.
 
-### Règles d'invariance du pipeline
-- **BasicPitch convertit, il n'analyse pas.** La comparaison MIDI est un algorithme séparé (cosinus sur embeddings MIDI).
-- Clé / BPM / empreinte s'extraient de **l'audio brut**, jamais du MIDI.
-- **Fail-fast strict** : tout halt (plagiat, similar, erreur HTTP/timeout) → aucun état partiel écrit on-chain.
-- Seuils : `>=95 %` (2A → REJECTED), `>=75 %` (2B → SIMILAR), `<50 %` ACRCloud → Step 3 ignoré.
-- Verdict de rapport : meilleur match `<75 %` → CLEAN/SEAL ; `>=75 %` → SIMILAR, pas d'écriture.
+---
 
-## Architecture du repo
+## Network
 
-| Dossier | Responsable | Stack | Rôle |
-| --- | --- | --- | --- |
-| `frontend/` | Marius | Next.js 14 + wagmi + Tailwind | Upload, World ID (IDKit), pipeline live, rapport, certificat SEALED |
-| `contracts/` | Cyriac | Foundry (Solidity), Base Sepolia | `Registry` + intégration World Router |
-| `cre/` | Nohem | Chainlink CRE SDK (TypeScript) | Orchestration DAG, parallélisation, callback on-chain |
-| `backend/` | GAGEXCM | Next.js API / Express + Python | Endpoints pipeline, BasicPitch, ACRCloud, Walrus, Unlink |
-| `docs/` | — | Markdown | Documentation technique + tâches |
+- Chain: Ethereum Sepolia (chain ID 11155111)
+- Registry contract: `0x152e74c85256F138ae4FA007bfd56917E74b8029`
+- ABI: `contracts/out/Registry.sol/Registry.json`
 
-## Contrats d'interface (endpoints backend consommés par le CRE)
+---
 
-| Endpoint | Entrée | Sortie |
-| --- | --- | --- |
+## Module instructions
+
+### contracts/ — Foundry / Solidity
+
+- Run `forge build && forge test -v` after every change. Do not propose code that does not compile.
+- The Status enum values are fixed — never change them: `SEALED=0, REVEALED=1, SIMILAR=2, REJECTED=3`.
+- `onlyCRE` must protect `receiveCRECallback` at all times. Never remove or weaken this modifier.
+- World ID proof is validated off-chain by the backend. The contract stores the nullifier only for anti-Sybil. Do not reintroduce on-chain ZK proof verification.
+- If you change the ABI, immediately flag it to `frontend/` (Cyriac) and `cre/` (Nohem) — they depend on it.
+- `creAddress` is currently set to the deployer as a placeholder. Do not treat it as final.
+
+### cre/ — Chainlink CRE SDK / TypeScript
+
+- You are the only module authorized to call `receiveCRECallback` on the Registry.
+- Always call the backend endpoints in this exact order and parallelism: Step 1 → (2A ∥ 2B) → Step 3 (after 2A) → Step 4 (after 2B + 3).
+- If any step returns an HTTP error or timeout, halt the workflow immediately. Do not call the next step.
+- Apply fail-fast thresholds before calling the next step: 2A ≥95 % → REJECTED, 2B ≥75 % → SIMILAR.
+- Never write on-chain if verdict is SIMILAR or REJECTED.
+- The callback signature is: `receiveCRECallback(bytes32 trackId, uint8 verdict, bytes rawReport)`.
+
+### frontend/ — Next.js / wagmi
+
+- Connect to the Registry using the ABI at `contracts/out/Registry.sol/Registry.json`.
+- Do not call `registerTrack` before the backend has validated the World ID proof.
+- Always store the `trackId` returned by `registerTrack` — it is required for the certificate and reveal flow.
+- `registerTrack` signature: `(uint256 nullifier, bytes32 commitmentHash, bytes32 registryRef)`.
+- `revealTrack` can only be called by the wallet that originally called `registerTrack` for that track.
+
+### backend/ — Express / Next.js / Python
+
+- Store MIDI sequences encrypted in PostgreSQL. Do not use Walrus.
+- `registryRef` passed to `registerTrack` must be `keccak256` of the MIDI entry's primary key in the DB.
+- `commitmentHash` must be computed as `keccak256(abi.encodePacked(fingerprint, profileJSON))` before calling `registerTrack`.
+- World ID proof validation: call `POST /api/v4/verify/{rp_id}` on the Developer Portal before passing the nullifier to the frontend.
+- Never return confidence scores below 50 % from `/api/check/public` — filter them out before responding.
+
+---
+
+## Shared interface contracts — never break these
+
+### Backend → CRE
+
+| Endpoint | Input | Output |
+|---|---|---|
 | `POST /api/convert` | `{ audioFile }` | `{ midiSequence }` |
 | `POST /api/check/public` | `{ audioFile }` | `{ matches: [{ ISRC, confidence_score }] }` |
 | `POST /api/compare/private` | `{ midiSequence }` | `{ registry_matches: [{ track_id, similarity_score }] }` |
 | `POST /api/compare/commercial` | `{ midiSequence, ISRCs[] }` | `{ commercial_deltas: [{ ISRC, melodic, rhythmic, structural }] }` |
 | `POST /api/report` | `{ audioFile, midiSequence, registry_matches, commercial_deltas }` | `{ verdict, submitted_track, similar_tracks[], ai_summary }` |
-| `POST /api/storage/upload` | `{ audioFile, metadata }` | `{ blobIds[] }` |
 
-## Smart contract `Registry` (Base Sepolia)
+### CRE → Contract
 
-- `Entry { commitmentHash, worldNullifier, timestamp, status, walrusBlobIds[] }`
-- `Status { SEALED, REVEALED, SIMILAR, REJECTED }`
-- `registerTrack(proof, root, nullifier, commitment, blobIds)` — valide World ID via World Router, anti-Sybil sur le nullifier.
-- `receiveCRECallback(verdict, commitmentHash, attestation)` — `onlyCRE`, écrit le verdict final + vérifie l'attestation Confidential AI.
-- `revealTrack(trackId, fullProfileHash)` — SEALED → REVEALED.
-- `commitmentHash = keccak256(empreinte + profil JSON)` ; `timestamp = block.timestamp`.
+```
+receiveCRECallback(bytes32 trackId, uint8 verdict, bytes rawReport)
 
-## Stack & sponsors (objectif 20 500 $)
+verdict: 0=CLEAN/SEALED | 2=SIMILAR | 3=REJECTED
+```
 
-- **World ID + AgentKit** — humain unique, Human-Backed Agents, free-trial (3 inscriptions gratuites/humain).
-- **Chainlink CRE** — orchestrateur DAG + écriture on-chain.
-- **Chainlink Confidential AI** — agents en TEE (Intel TDX) + attestations vérifiables on-chain.
-- **Unlink SDK** — paiements x402 privés des agents + upload SoundCloud non-traçable.
-- **Walrus (Sui)** — stockage chiffré (audio + métadonnées), blobs immuables.
-- **Base Sepolia** — Registry, World Router, pool Unlink. Paiements via **x402**.
+### Frontend → Contract
 
-## Conventions pour les agents
+```
+registerTrack(uint256 nullifier, bytes32 commitmentHash, bytes32 registryRef) → bytes32 trackId
 
-- **Langue** : documentation et messages en français.
-- **Confidentialité d'abord** : ne jamais logguer/exposer d'audio brut ou de MIDI de track non sortie.
-- **Ne pas casser le DAG** : respecter parallélisation (2A∥2B), ordre (3 après 2A, 4 après 2B+3) et seuils fail-fast.
-- **Frontières de package** : rester dans le périmètre concerné ; toute modif d'interface (ABI, format callback, schéma endpoint) doit être signalée car d'autres en dépendent.
-- **Secrets** : jamais commiter `.env` ni clés ; utiliser `.env.example`.
-- **Ne pas committer/push sans demande explicite.**
-- Avant d'implémenter, se référer aux deux docs dans `docs/` comme source de vérité.
+revealTrack(bytes32 trackId, bytes32 fullProfileHash)
+```
+
+---
+

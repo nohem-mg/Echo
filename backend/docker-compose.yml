@@ -3,6 +3,14 @@
 # echo-common package alongside its own service. One block per microservice; the
 # CRE reaches them by service name on the internal network
 # (e.g. http://basic-pitch-service:8001, http://acrcloud-service:8002).
+#
+# Quick start (Nohem / CRE):
+#   1. docker compose up --build          # BasicPitch on :8001
+#   2. bun backend/dev-gateway/server.ts  # CRE-facing API on :8080
+#   3. cd cre && cre workflow simulate echo --target staging-settings \
+#        --http-payload ./echo/sample-submission.json --trigger-index 0 --non-interactive
+#
+# CRE config already points to http://127.0.0.1:8080 (cre/echo/config.staging.json).
 services:
   basic-pitch-service:
     build:

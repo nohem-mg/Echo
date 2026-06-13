@@ -20,6 +20,7 @@ import {
 import { BackendError } from "./backend";
 import { buildRegistryCallback } from "./callback";
 import { createBackendClient, type PipelineClient } from "./client";
+import { dispatchOnChainCallback } from "./evm-callback";
 import {
   THRESHOLD_ACR_MIN,
   THRESHOLD_PLAGIARISM,
@@ -37,6 +38,14 @@ export type Config = {
   useConfidentialHttp?: boolean;
   /** Vault DON secret owner (empty string for simulation). */
   secretsOwner?: string;
+  /**
+   * Registry contract address on Ethereum Sepolia (Cyriac deploy).
+   * When set, the DON-signed report is dispatched on-chain for all
+   * non-ERROR verdicts. Leave unset to skip the EVM write (simulation mode).
+   *
+   * TODO: replace placeholder once Cyriac deploys the Registry contract.
+   */
+  registryAddress?: string;
 };
 
 // Minimal logger so the core DAG logic stays decoupled from the CRE runtime.
@@ -50,33 +59,43 @@ const halt = (
   agentAttestations?: readonly AgentAttestation[],
 ): PipelineResult => ({
   verdict,
+  trackId: input.trackId,
   commitmentHash: input.commitmentHash,
   reason,
   agentAttestations,
 });
 
-// Attach Confidential AI evidence + DON-signed callback attestation when eligible.
+// Build DON-signed report + dispatch on-chain callback for all non-ERROR verdicts.
 const finalizeResult = (
   runtime: Runtime<Config>,
   client: PipelineClient,
   result: PipelineResult,
 ): PipelineResult => {
+  // ERROR = infrastructure failure; no on-chain state written.
+  if (result.verdict === "ERROR") return result;
+
   const agentAttestations = client.getAgentAttestations();
-  if (agentAttestations.length === 0) {
-    return result;
+  if (agentAttestations.length > 0) {
+    verifyAgentAttestations(agentAttestations);
+    runtime.log(`Confidential AI — ${agentAttestations.length} agent attestation(s) verified`);
   }
 
-  verifyAgentAttestations(agentAttestations);
-  runtime.log(`Confidential AI — ${agentAttestations.length} agent attestation(s) verified`);
+  const withAgents: PipelineResult =
+    agentAttestations.length > 0 ? { ...result, agentAttestations } : result;
 
-  const withAgents: PipelineResult = { ...result, agentAttestations };
-
-  if (result.verdict !== "CLEAN" || !result.report) {
-    return withAgents;
-  }
-
-  const attestation = buildOnChainAttestation(runtime, withAgents, agentAttestations);
+  const { attestation, report } = buildOnChainAttestation(runtime, withAgents);
   runtime.log(`CRE attestation ready for callback (${attestation.slice(0, 18)}…)`);
+
+  // Dispatch on-chain when Cyriac provides a real Registry address (not zero / placeholder).
+  const registry = runtime.config.registryAddress?.toLowerCase();
+  if (registry && registry !== "0x0000000000000000000000000000000000000000") {
+    dispatchOnChainCallback(runtime, runtime.config.registryAddress!, report);
+  }
+
+  // PipelineResult.callback is only set for CLEAN (the SEALED entry on-chain).
+  if (withAgents.verdict !== "CLEAN" || !withAgents.report) {
+    return { ...withAgents, attestation };
+  }
 
   const callback = buildRegistryCallback({ ...withAgents, attestation });
   return { ...withAgents, attestation, callback };
@@ -158,6 +177,7 @@ export const runPipelineWithClient = (
     log(`Final verdict: ${report.verdict}`);
     return {
       verdict: report.verdict,
+      trackId: input.trackId,
       commitmentHash: input.commitmentHash,
       report,
       agentAttestations: client.getAgentAttestations(),

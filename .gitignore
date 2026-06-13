@@ -43,9 +43,11 @@ cre/.cre/
 !backend/fixtures/audio/arpeggio.mp3
 tmp/
 uploads/
+frontend/.data/
 
 # OS / editor
 .DS_Store
 *.log
 .idea/
 .vscode/
+contracts/lib/
