@@ -57,8 +57,8 @@ services:
     ports:
       - "8004:8004"
     environment:
-      # Owns the private registry; points at the compose Postgres service.
-      ECHO_REGISTRY_DATABASE_URL: postgresql://echo:echo@registry-db:5432/echo
+      # Default: local Docker Postgres. Override via backend/.env or docker-compose.shared-registry.yml.
+      ECHO_REGISTRY_DATABASE_URL: ${ECHO_REGISTRY_DATABASE_URL:-postgresql://echo:echo@registry-db:5432/echo}
     env_file:
       - path: ./services/registry-service/.env
         required: false
