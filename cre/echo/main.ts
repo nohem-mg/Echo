@@ -115,6 +115,7 @@ const buildPlagiarismReport = (match: AcrMatch, reason: string): ReportResponse 
         rhythm: match.confidence_score,
         structure: match.confidence_score,
         key: match.ISRC ? `ISRC ${match.ISRC}` : "—",
+        BPM: 0,
       },
     ],
     ai_summary: `${reason}. Correspondance acoustique avec « ${label} ».`,
@@ -133,6 +134,7 @@ const buildSimilarRegistryReport = (match: RegistryMatch, reason: string): Repor
       rhythm: match.similarity_score,
       structure: match.similarity_score,
       key: match.track_id.slice(0, 10),
+      BPM: 0,
     },
   ],
   ai_summary: `${reason}. Similarité compositionnelle vs registre privé.`,
@@ -247,12 +249,20 @@ export const runPipelineWithClient = (
     // ---- Fail-fast 2A: obvious plagiarism ---------------------------------
     const plagiarism = matches.find((m) => m.confidence_score >= THRESHOLD_PLAGIARISM);
     if (plagiarism) {
+      const matchLabel = formatAcrMatchLabel(plagiarism);
       log(`STOP 2A — plagiarism (${plagiarism.confidence_score}% on ${plagiarism.ISRC})`);
       updateStep("02A", {
         status: "blocked",
         progress: 100,
-        meta: `Match: ${plagiarism.confidence_score}%`,
+        meta: `${matchLabel} · ${plagiarism.confidence_score}%`,
         reason: `ACRCloud plagiarism ${plagiarism.confidence_score}%`,
+        detail: JSON.stringify({
+          label: matchLabel,
+          ISRC: plagiarism.ISRC,
+          title: plagiarism.title,
+          artists: plagiarism.artists,
+          score: plagiarism.confidence_score,
+        }),
       });
       updateStep("02B", { status: "done", progress: 100, meta: `${registryMatches.length} private match(es)` });
       return {
@@ -327,8 +337,9 @@ export const runPipelineWithClient = (
       })
       .result();
 
+    const submitted = report.submitted_track;
     log(
-      `Step 4 OK — verdict=${report.verdict}  key=${report.submitted_track.key} ${report.submitted_track.mode}  BPM=${report.submitted_track.BPM}  fp=${report.submitted_track.fingerprint}`,
+      `Step 4 OK — verdict=${report.verdict}  key=${submitted?.key ?? "?"} ${submitted?.mode ?? ""}  BPM=${submitted?.BPM ?? "?"}  fp=${submitted?.fingerprint ?? "?"}`,
     );
     if (report.similar_tracks.length > 0) {
       log(`  similar_tracks: ${report.similar_tracks.map((t) => `#${t.rank} ${t.title} (${t.score}%)`).join(" | ")}`);
@@ -339,7 +350,7 @@ export const runPipelineWithClient = (
     updateStep("04", { status: "done", progress: 100, meta: report.verdict });
 
     // SEAL — persist in private registry before on-chain callback (CLEAN only).
-    if (report.verdict === "CLEAN") {
+    if (report.verdict === "CLEAN" && report.submitted_track) {
       log(`SEAL — POST /api/registry  trackId=${input.trackId}  fingerprint=${report.submitted_track.fingerprint}`);
       client.register({
         trackId: input.trackId,

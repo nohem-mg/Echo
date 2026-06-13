@@ -238,6 +238,51 @@ function getBestMatch(report?: EchoReport) {
   return report?.similar_tracks?.reduce((max, match) => Math.max(max, match.score), 0) ?? 0;
 }
 
+type BlockedMatchDetail = {
+  label?: string;
+  ISRC?: string;
+  title?: string;
+  artists?: string[];
+  score?: number;
+};
+
+function parseBlockedStepDetail(detail?: string): BlockedMatchDetail | undefined {
+  if (!detail || !detail.trim().startsWith("{")) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(detail) as BlockedMatchDetail;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatBlockedMatchLabel(detail?: BlockedMatchDetail, meta?: string): string | undefined {
+  if (detail?.label) {
+    return detail.label;
+  }
+
+  const artists = detail?.artists?.filter(Boolean).join(", ");
+  if (artists && detail?.title) {
+    return `${artists} — ${detail.title}`;
+  }
+  if (detail?.title) {
+    return detail.title;
+  }
+  if (artists) {
+    return artists;
+  }
+  if (detail?.ISRC) {
+    return `ISRC ${detail.ISRC}`;
+  }
+  if (meta && !meta.startsWith("Match:")) {
+    return meta.replace(/\s·\s\d+%$/, "");
+  }
+
+  return undefined;
+}
+
 function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineStep[]): EchoReport | undefined {
   if (!flow || flow.status !== "pipeline_blocked") {
     return undefined;
@@ -250,26 +295,60 @@ function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineSt
     return undefined;
   }
 
-  const scoreMatch = blockedStep.meta?.match(/(\d+)%/) ?? blockedStep.reason?.match(/(\d+)%/);
-  const score = scoreMatch ? Number(scoreMatch[1]) : 0;
+  const parsedDetail = parseBlockedStepDetail(blockedStep.detail);
+  const scoreMatch =
+    blockedStep.meta?.match(/(\d+)%/) ??
+    blockedStep.reason?.match(/(\d+)%/) ??
+    (parsedDetail?.score ? [`${parsedDetail.score}`, `${parsedDetail.score}`] : null);
+  const score = parsedDetail?.score ?? (scoreMatch ? Number(scoreMatch[1]) : 0);
   const isPlagiarism = blockedStep.stepKey === "02A";
+  const matchLabel =
+    formatBlockedMatchLabel(parsedDetail, blockedStep.meta) ??
+    (isPlagiarism ? "Correspondance ACRCloud" : "Similarité registre privé");
+  const isrcKey = parsedDetail?.ISRC ? `ISRC ${parsedDetail.ISRC}` : "—";
 
   return {
     verdict: isPlagiarism ? "REJECTED" : "SIMILAR",
     similar_tracks: [
       {
         rank: 1,
-        title: blockedStep.reason ?? (isPlagiarism ? "Correspondance ACRCloud" : "Similarité registre privé"),
+        title: matchLabel,
         source: isPlagiarism ? "ACRCloud" : "Registre privé",
         score,
         melody: score,
         rhythm: score,
         structure: score,
-        key: isPlagiarism ? "—" : blockedStep.reason?.slice(0, 12) ?? "—",
+        key: isPlagiarism ? isrcKey : blockedStep.reason?.slice(0, 12) ?? "—",
       },
     ],
-    ai_summary: blockedStep.reason ?? flow.error ?? "Analyse interrompue — aucun seal on-chain.",
+    ai_summary: isPlagiarism
+      ? `Plagiat détecté (${score}%) — correspondance avec « ${matchLabel} ».`
+      : blockedStep.reason ?? flow.error ?? "Analyse interrompue — aucun seal on-chain.",
   };
+}
+
+function resolveActiveReport(
+  flow: EchoFlow | null,
+  steps: EchoPipelineStep[],
+  mockReport?: EchoReport,
+): EchoReport | undefined {
+  if (flow?.report?.similar_tracks?.length) {
+    const primaryTitle = flow.report.similar_tracks[0]?.title ?? "";
+    if (!primaryTitle.startsWith("ACRCloud plagiarism")) {
+      return flow.report;
+    }
+  }
+
+  const fallback = buildFallbackBlockedReport(flow, steps);
+  if (fallback) {
+    return fallback;
+  }
+
+  if (flow?.report) {
+    return flow.report;
+  }
+
+  return mockReport;
 }
 
 function toBytes32Hex(value: string) {
@@ -336,7 +415,11 @@ export default function Home() {
   const canPay = Boolean(audioName && verification.status === "verified" && verification.flow.id && payment.status !== "pending" && payment.status !== "paid");
   const canStartAnalysis = Boolean(payment.status === "paid" && flow?.id && audioFile && !pipelineStarted && !isStartingPipeline);
   const shouldUseMockReport = Boolean(echoConfig.mockWorldEnabled && flow?.worldMode === "mock");
-  const activeReport = flow?.report ?? buildFallbackBlockedReport(flow, livePipelineSteps) ?? (shouldUseMockReport && flow?.status === "pipeline_completed" ? mockReports.CLEAN : undefined);
+  const activeReport = resolveActiveReport(
+    flow,
+    livePipelineSteps,
+    shouldUseMockReport && flow?.status === "pipeline_completed" ? mockReports.CLEAN : undefined,
+  );
   const reportMatches = useMemo(() => normalizeReportMatches(activeReport), [activeReport]);
   const bestReportMatch = getBestMatch(activeReport);
   const hasRegistrySeal = Boolean(flow?.status === "pipeline_completed" && flow.registryTxHash);

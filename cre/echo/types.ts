@@ -107,7 +107,7 @@ export type SimilarTrack = {
 export type ReportResponse = {
   // Backend decides CLEAN | SIMILAR; CRE adds REJECTED on fail-fast 2A halt.
   verdict: "CLEAN" | "SIMILAR" | "REJECTED";
-  submitted_track: SubmittedTrack;
+  submitted_track?: SubmittedTrack;
   similar_tracks: SimilarTrack[];
   ai_summary: string;
 };
