@@ -1,0 +1,12 @@
+# Echo backend — service orchestrator.
+# One block per microservice. As the pipeline grows (acrcloud, midi-similarity,
+# ...), add a block here; the CRE then reaches them by service name on the
+# internal network (e.g. http://basic-pitch-service:8001).
+services:
+  basic-pitch-service:
+    build: ./services/basic-pitch-service
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./services/basic-pitch-service/.env.example
+    restart: unless-stopped

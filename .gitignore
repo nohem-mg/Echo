@@ -3,8 +3,12 @@ node_modules/
 .pnp
 .pnp.js
 .venv/
+.venv*/
+venv/
 __pycache__/
 *.pyc
+*.egg-info/
+.pytest_cache/
 
 # Env / secrets
 .env
@@ -34,6 +38,9 @@ cre/.cre/
 *.mp3
 *.mid
 *.midi
+# ... except versioned test fixtures
+!**/tests/resources/*.wav
+!**/tests/resources/*.mp3
 tmp/
 uploads/
 
