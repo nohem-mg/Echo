@@ -43,14 +43,15 @@ contract RegistryTest is Test {
     function test_CRECallback_wrongCaller_reverts() public {
         bytes32 trackId = _register(artist);
         vm.prank(hacker);
-        vm.expectRevert(Registry.NotCRE.selector);
-        registry.receiveCRECallback(trackId, Registry.Status.SIMILAR, "");
+        vm.expectRevert("Only CRE forwarder");
+        registry.route(bytes32(0), address(0), address(0), "", abi.encode(trackId, uint8(Registry.Status.SIMILAR)));
     }
 
     function test_CRECallback_success() public {
         bytes32 trackId = _register(artist);
         vm.prank(cre);
-        registry.receiveCRECallback(trackId, Registry.Status.SIMILAR, "");
+        bool success = registry.route(bytes32(0), address(0), address(0), "", abi.encode(trackId, uint8(Registry.Status.SIMILAR)));
+        assertTrue(success);
         assertEq(
             uint8(registry.getEntry(trackId).status),
             uint8(Registry.Status.SIMILAR)

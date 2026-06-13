@@ -2,7 +2,7 @@
 // Echo — On-chain callback dispatch via EVMClient.writeReport
 // --------------------------------------------------------------------------
 // Sends the DON-signed CRE report to the Registry contract on Ethereum Sepolia.
-// The Chainlink forwarder on-chain calls receiveCRECallback() on the Registry.
+// The Chainlink forwarder on-chain calls route() on the Registry.
 //
 // Blocked on: Registry contract address (Cyriac, Ethereum Sepolia deploy).
 // REGISTRY_ADDRESS placeholder — swap in config once Cyriac deploys.
@@ -21,7 +21,7 @@ const SEPOLIA_CHAIN_SELECTOR =
  *
  * Blocked on:
  *   registryAddress — Cyriac's deployed Registry on Ethereum Sepolia.
- *   ABI — Cyriac must confirm receiveCRECallback(string, bytes32, bytes) types.
+ *   ABI — Cyriac must confirm route(bytes32,address,address,bytes,bytes) types.
  */
 export function dispatchOnChainCallback<C>(
   runtime: Runtime<C>,
@@ -34,6 +34,6 @@ export function dispatchOnChainCallback<C>(
     report,
   }).result();
   runtime.log(
-    `CRE → Registry.receiveCRECallback dispatched (${registryAddress.slice(0, 10)}…)`,
+    `CRE → Registry.route dispatched (${registryAddress.slice(0, 10)}…)`,
   );
 }

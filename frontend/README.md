@@ -39,6 +39,8 @@ Important variables:
 - `NEXT_PUBLIC_FLOW_FEE_ETH`: native ETH amount required before the flow starts.
 - `SEPOLIA_RPC_URL`: optional server RPC URL for transaction verification; viem uses the public Sepolia RPC fallback if empty.
 - `DATABASE_URL`: durable Postgres connection string for persisted Echo flows. Required on Vercel.
+- `BLOB_READ_WRITE_TOKEN`: Vercel Blob read/write token for production audio uploads. Required on Vercel.
+- `MAX_AUDIO_UPLOAD_MB`: optional server upload limit for `/api/tracks/upload`; defaults to `4`.
 - `ECHO_ENABLE_MOCK_WORLD` / `NEXT_PUBLIC_ECHO_ENABLE_MOCK_WORLD`: set both to `false` for the real World ID flow. Mock mode is opt-in only.
 
 Check whether the real World config is complete:
@@ -53,7 +55,7 @@ curl http://localhost:3000/api/world/status
 - World ID proof request through IDKit
 - RainbowKit wallet connection on Ethereum Sepolia
 - Native ETH fee transaction before pipeline start
-- Simulated confidential pipeline states
+- Persisted backend pipeline states initialized after real upload
 - Comparison report table with score tones
 - SEALED certificate preview with hash and explorer actions
 - Responsive desktop/mobile visual system inspired by artist studio and music agency references
@@ -65,12 +67,15 @@ curl http://localhost:3000/api/world/status
 - The browser computes a local SHA-256 fingerprint for the selected audio file before World ID verification.
 - Successful World ID verification creates or reuses a persisted flow with `nullifierHash`, track name, track fingerprint, and status.
 - Payment references and transaction hashes are attached to the same persisted flow.
-- The backend confirms receipt status, receiver, sender, amount, and reference calldata before starting the UI pipeline.
+- The backend confirms receipt status, receiver, sender, amount, and reference calldata before audio upload.
+- `/api/tracks/upload` validates WAV/MP3 files, recomputes the SHA-256 fingerprint server-side, stores the audio locally in dev or in Vercel Blob in production, and attaches a `trackId` to the paid flow.
+- `/api/pipeline/start` initializes persisted pipeline rows and exposes the analysis handoff payload for the backend/CRE workstream.
+- `/api/pipeline/status?flowId=...` returns the current flow, uploaded track, and persisted pipeline steps for UI polling.
 - Persistence uses Postgres when `DATABASE_URL` is configured. Local development falls back to `frontend/.data/echo-flows.json`; Vercel requires `DATABASE_URL`.
 - Local browser development only falls back to mock World ID proof when both mock env flags are explicitly set to `true`.
 
 ## Next Integration Anchors
 
-- Replace mock pipeline rows with backend/CRE status streaming.
+- Wire backend/CRE workers to update persisted pipeline rows as BasicPitch, ACRCloud, private registry comparison, commercial deltas, and report generation complete.
 - Replace mock comparison report data with the final report API.
 - Feed certificate/reveal actions from the deployed registry ABI/address.

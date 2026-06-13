@@ -1,6 +1,47 @@
 import type { IDKitResult } from "@worldcoin/idkit-core";
 
-export type EchoFlowStatus = "world_verified" | "payment_requested" | "payment_confirmed" | "pipeline_started" | "error";
+export type EchoFlowStatus =
+  | "world_verified"
+  | "payment_requested"
+  | "payment_confirmed"
+  | "track_uploaded"
+  | "pipeline_started"
+  | "pipeline_completed"
+  | "pipeline_blocked"
+  | "error";
+
+export type EchoTrack = {
+  id: string;
+  flowId: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  fingerprint: string;
+  storageProvider: "local_file" | "vercel_blob";
+  storageUrl?: string;
+  storagePath?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EchoPipelineStatus = "queued" | "running" | "done" | "blocked" | "error";
+
+export type EchoPipelineStep = {
+  id: string;
+  flowId: string;
+  trackId: string;
+  stepKey: string;
+  label: string;
+  detail: string;
+  phase: "sequential" | "parallel";
+  position: number;
+  status: EchoPipelineStatus;
+  progress: number;
+  meta?: string;
+  reason?: string;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type EchoFlow = {
   id: string;
@@ -81,4 +122,14 @@ export type PaymentConfirmRequest = {
   hash: `0x${string}`;
   reference: string;
   expectedFrom?: `0x${string}`;
+};
+
+export type TrackUploadResponse = {
+  flow: EchoFlow;
+  track: EchoTrack;
+  pipeline: EchoPipelineStep[];
+  analysis: {
+    status: "queued";
+    entrypoint: "/api/pipeline/start";
+  };
 };

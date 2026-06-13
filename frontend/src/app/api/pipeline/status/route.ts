@@ -3,8 +3,13 @@ import { FlowStoreError, getFlow, getPipelineSteps, getTrackForFlow } from "@/li
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ flowId: string }> }): Promise<Response> {
-  const { flowId } = await params;
+export async function GET(request: Request): Promise<Response> {
+  const { searchParams } = new URL(request.url);
+  const flowId = searchParams.get("flowId")?.trim();
+
+  if (!flowId) {
+    return NextResponse.json({ error: "Missing flowId" }, { status: 400 });
+  }
 
   try {
     const [flow, track, pipeline] = await Promise.all([getFlow(flowId), getTrackForFlow(flowId), getPipelineSteps(flowId)]);
@@ -13,7 +18,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ flo
       return NextResponse.json({ error: "Flow not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ flow, track, pipeline });
+    return NextResponse.json({
+      flow,
+      track,
+      pipeline,
+    });
   } catch (error) {
     if (error instanceof FlowStoreError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
