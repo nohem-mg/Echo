@@ -18,6 +18,7 @@ import {
 import {
   stepCheckPublicConfidential,
   stepConvertConfidential,
+  stepReportConfidential,
 } from "./confidential-steps";
 import {
   stepCheckPublic,
@@ -92,7 +93,7 @@ export function createBackendClient<C>(
       comparePrivate: (midiSequence) => stepComparePrivate(runtime, baseUrl, midiSequence),
       compareCommercial: (midiSequence, ISRCs) =>
         stepCompareCommercial(runtime, baseUrl, midiSequence, ISRCs),
-      report: (args) => stepReport(runtime, baseUrl, args),
+      report: (args) => stepReportConfidential(runtime, baseUrl, args, ctx, confidentialOptions),
       register: (args) => stepRegister(runtime, baseUrl, args),
       getAgentAttestations: () => ctx.collector.list(),
     };

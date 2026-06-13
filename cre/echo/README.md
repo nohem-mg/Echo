@@ -85,6 +85,33 @@ Then trigger with the same `curl` above. The verdict will be dispatched to the R
   -R ./cre
 ```
 
+### Mode D — dev audio réel (`dev-audio-settings`)
+
+Pour tester avec un fichier local (`file://backend/fixtures/audio/…`) sans Confidential HTTP :
+
+```bash
+# Stack backend complète (BasicPitch, ACRCloud, MIDI, registry, report)
+cd backend && docker compose up
+
+# Gateway (autre terminal)
+bun backend/dev-gateway/server.ts
+
+# Simulateur — limites HTTP étendues (Step 4 / librosa peut dépasser 10s au cold start)
+/Users/nohemmg/.cre/bin/cre workflow simulate ./cre/echo \
+  --target dev-audio-settings \
+  --listen \
+  --broadcast \
+  --limits ./sim-limits-dev-audio.json \
+  -e ./cre/.env \
+  -R ./cre
+
+curl -X POST http://localhost:2000/trigger \
+  -H "Content-Type: application/json" \
+  -d @cre/echo/sample-submission-real.json
+```
+
+> **Note :** le simulateur CRE impose par défaut `HTTPAction.ConnectionTimeout=10s`. Step 4 peut dépasser cette limite ; utilisez `--limits ./sim-limits-dev-audio.json` (90s). Le `report-service` pré-charge librosa au démarrage pour rester sous 10s quand le conteneur est déjà warm.
+
 ---
 
 ## 4. Expected output

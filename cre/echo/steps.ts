@@ -86,10 +86,16 @@ export function stepReport<C>(
     commercial_deltas: CommercialDelta[];
   },
 ): Deferred<ReportResponse> {
-  return backendPost<C, ReportResponse>(runtime, baseUrl, "/api/report", {
-    audioFile: args.audioRef,
-    midiSequence: args.midiSequence,
-    registry_matches: args.registry_matches,
-    commercial_deltas: args.commercial_deltas,
-  });
+  return backendPost<C, ReportResponse>(
+    runtime,
+    baseUrl,
+    "/api/report",
+    {
+      audioFile: args.audioRef,
+      midiSequence: args.midiSequence,
+      registry_matches: args.registry_matches,
+      commercial_deltas: args.commercial_deltas,
+    },
+    85_000,
+  );
 }

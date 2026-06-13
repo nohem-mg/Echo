@@ -7,7 +7,7 @@
  *   POST /api/compare/private  { midiSequence }→ midi-similarity:8003  /api/compare/private
  *   POST /api/registry         { track_id, … } → registry       :8004  /api/registry   (SEAL)
  *   POST /api/compare/commercial               → (mock — service not built yet)
- *   POST /api/report                           → (mock — service not built yet)
+ *   POST /api/report         { audio + meta }  → report-service :8005  /api/report
  *
  * Contract translation:
  *   - audioRef resolution (dev):
@@ -31,6 +31,7 @@ const BASIC_PITCH_URL = process.env.ECHO_BASIC_PITCH_URL ?? "http://127.0.0.1:80
 const ACRCLOUD_URL = process.env.ECHO_ACRCLOUD_URL ?? "http://127.0.0.1:8002";
 const MIDI_URL = process.env.ECHO_MIDI_URL ?? "http://127.0.0.1:8003";
 const REGISTRY_URL = process.env.ECHO_REGISTRY_URL ?? "http://127.0.0.1:8004";
+const REPORT_URL = process.env.ECHO_REPORT_URL ?? "http://127.0.0.1:8005";
 const VERBOSE = process.env.ECHO_GATEWAY_VERBOSE !== "0";
 const DEV_AUDIO_OVERRIDE = process.env.ECHO_DEV_AUDIO;
 /** CRE sim: HTTP resp ≤250 KB, consensus observation ≤25 KB — long tracks need a short clip. */
@@ -254,6 +255,34 @@ const proxyRegister = async (payload: {
   return body;
 };
 
+// Step 4 — acoustic extraction + final report (multipart: audio + JSON metadata).
+const proxyReport = async (payload: {
+  audioFile: string;
+  midiSequence: string | Record<string, unknown>;
+  registry_matches: unknown[];
+  commercial_deltas: unknown[];
+}) => {
+  vlog(
+    `→ POST /api/report  audioFile=${JSON.stringify(payload.audioFile)}  registry=${payload.registry_matches.length}  commercial=${payload.commercial_deltas.length}`,
+  );
+  let { bytes, filename } = await resolveAudio(payload.audioFile);
+  ({ bytes, filename } = trimAudioIfNeeded(bytes, filename));
+  const midiJson =
+    typeof payload.midiSequence === "string"
+      ? payload.midiSequence
+      : JSON.stringify(payload.midiSequence);
+  const form = new FormData();
+  form.append("file", new Blob([bytes]), filename);
+  form.append("registry_matches", JSON.stringify(payload.registry_matches ?? []));
+  form.append("commercial_deltas", JSON.stringify(payload.commercial_deltas ?? []));
+  form.append("midiSequence", midiJson);
+  const res = await fetch(`${REPORT_URL}/api/report`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(`${REPORT_URL}/api/report → ${res.status}: ${await res.text()}`);
+  const body = await res.json();
+  vlog(`← report OK  verdict=${body.verdict}  similar=${body.similar_tracks?.length ?? 0}`);
+  return body;
+};
+
 /** Fallbacks when a service isn't up yet — keeps the CRE DAG runnable in pure-mock mode. */
 const mockConvert = (audioFile: string) => {
   vlog("← convert MOCK (basic-pitch down)");
@@ -268,20 +297,19 @@ const mockComparePrivate = () => {
   return { registry_matches: [{ track_id: "t-42", similarity_score: 40 }] };
 };
 
-// Services not built yet — always mocked.
+// Step 3 — still mocked until the commercial comparison service exists.
 const mockRoutes: Record<string, () => unknown> = {
   "/api/compare/commercial": () => ({
     commercial_deltas: [{ ISRC: "USRC12345", melodic: 72, rhythmic: 81, structural: 55 }],
   }),
-  "/api/report": () => ({
-    verdict: "CLEAN",
-    submitted_track: { key: "A", mode: "min", BPM: 171, fingerprint: "fp-abc" },
-    similar_tracks: [
-      { rank: 1, title: "Blinding Lights — The Weeknd", source: "ACRCloud", score: 68, melody: 72, rhythm: 81, structure: 55, key: "A min", BPM: 171 },
-    ],
-    ai_summary: "Aucune similarité significative (<75%). Track éligible au SEAL.",
-  }),
 };
+
+const mockReport = () => ({
+  verdict: "CLEAN",
+  submitted_track: { key: "A", mode: "min", BPM: 171, fingerprint: "fp-mock" },
+  similar_tracks: [],
+  ai_summary: "Aucune similarité significative (<75%). Track éligible au SEAL. (mock — report-service down)",
+});
 
 const upstreamError = (err: unknown) => {
   console.error("[gateway] upstream error:", err);
@@ -296,11 +324,12 @@ Bun.serve({
 
     // -- Health ---------------------------------------------------------------
     if (pathname === "/health") {
-      const [bp, acr, midi, reg] = await Promise.all([
+      const [bp, acr, midi, reg, rep] = await Promise.all([
         healthy(BASIC_PITCH_URL),
         healthy(ACRCLOUD_URL),
         healthy(MIDI_URL),
         healthy(REGISTRY_URL),
+        healthy(REPORT_URL),
       ]);
       return json({
         status: "ok",
@@ -308,6 +337,7 @@ Bun.serve({
         acrcloud: acr ? "ok" : "down",
         midi_similarity: midi ? "ok" : "down",
         registry: reg ? "ok" : "down",
+        report: rep ? "ok" : "down",
       });
     }
 
@@ -375,7 +405,36 @@ Bun.serve({
       }
     }
 
-    // -- Steps 3 / 4: mocked until the services exist -------------------------
+    // -- Step 4: /api/report --------------------------------------------------
+    if (pathname === "/api/report" && req.method === "POST") {
+      const payload = (await req.json()) as {
+        audioFile?: string;
+        midiSequence?: string | Record<string, unknown>;
+        registry_matches?: unknown[];
+        commercial_deltas?: unknown[];
+      };
+      if (!payload.audioFile || payload.midiSequence == null) {
+        return json({ code: "validation_error", message: "audioFile and midiSequence required" }, 422);
+      }
+      if (!(await healthy(REPORT_URL))) {
+        vlog("← report MOCK (report-service down)");
+        return json(mockReport());
+      }
+      try {
+        return json(
+          await proxyReport({
+            audioFile: payload.audioFile,
+            midiSequence: payload.midiSequence,
+            registry_matches: payload.registry_matches ?? [],
+            commercial_deltas: payload.commercial_deltas ?? [],
+          }),
+        );
+      } catch (err) {
+        return upstreamError(err);
+      }
+    }
+
+    // -- Step 3: mocked until the commercial service exists -------------------
     const mock = mockRoutes[pathname];
     if (mock && req.method === "POST") {
       await req.text();
@@ -395,5 +454,6 @@ console.log(`  basic-pitch     → ${BASIC_PITCH_URL}   (POST /api/convert)`);
 console.log(`  acrcloud        → ${ACRCLOUD_URL}   (POST /api/check/public)`);
 console.log(`  midi-similarity → ${MIDI_URL}   (POST /api/compare/private)`);
 console.log(`  registry        → ${REGISTRY_URL}   (POST /api/registry — SEAL)`);
-console.log(`  commercial / report → mock (services not built yet)`);
+console.log(`  report          → ${REPORT_URL}   (POST /api/report — Step 4)`);
+console.log(`  commercial      → mock (service not built yet)`);
 console.log(`  attestation header  → ${ATTESTATION_HEADER}`);
