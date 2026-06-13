@@ -45,20 +45,18 @@ private registry (ingestion path, e.g. when a track is SEALED).
 ### `GET /health`
 Liveness.
 
-## Registry store
+## Owns no data — reads the registry over HTTP
 
-`RegistryStore` interface with two backends: **PostgreSQL** (production) and **in-memory**
-(tests / local dev). With no `ECHO_MIDI_DATABASE_URL`, the service runs on the in-memory
-store. `docker compose up` provides a Postgres (`registry-db`) automatically.
-
-The **schema is owned by the database**, not the app: `backend/db/init/*.sql` runs once on
-first cluster init (mounted at `/docker-entrypoint-initdb.d/`). The service issues DML only,
-never DDL. To change the schema, edit the SQL and recreate the volume (`docker compose down -v`).
+This service is **pure compute**. The sealed-track registry lives in **registry-service**;
+at compare time this service fetches the cached intervals from it
+(`GET /api/registry/intervals`, configured via `ECHO_MIDI_REGISTRY_URL`) and scores the
+query against them. It holds no database. Feature extraction (`skyline_intervals`) is shared
+via `echo-common` so the registry and this service compute intervals identically.
 
 ## Run (Docker, from `backend/`)
 
 ```bash
-docker compose up --build midi-similarity-service   # also starts registry-db (port 8003)
+docker compose up --build midi-similarity-service   # also starts registry-service + registry-db
 ```
 
 ## Development & tests (local venv)
@@ -67,12 +65,5 @@ docker compose up --build midi-similarity-service   # also starts registry-db (p
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ../../packages/echo-common
 pip install -e ".[dev]"
-pytest          # 11 tests: similarity algorithm (case-law cases) + endpoints, no DB needed
-```
-
-To also exercise the real PostgreSQL path (the `$2::jsonb` cast, jsonb round-trip, upsert):
-
-```bash
-docker compose up -d registry-db
-ECHO_MIDI_TEST_DATABASE_URL=postgresql://echo:echo@localhost:5432/echo pytest tests/test_postgres_store.py
+pytest          # 11 tests: similarity algorithm (case-law cases) + endpoints; registry stubbed, no network
 ```

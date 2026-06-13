@@ -28,14 +28,3 @@ class RegistryMatch(BaseModel):
 class ComparePrivateResponse(BaseModel):
     registry_matches: list[RegistryMatch]
     request_id: str
-
-
-class RegisterRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-    track_id: str
-    midi_sequence: MidiSequence = Field(alias="midiSequence")
-
-
-class RegisterResponse(BaseModel):
-    track_id: str
-    request_id: str

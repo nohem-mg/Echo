@@ -9,17 +9,20 @@ cross-cutting code through the `echo-common` package — no duplication, no sche
 ```
 backend/
 ├── docker-compose.yml          # orchestrator: one block per service
+├── db/init/                    # registry schema, owned by the DB (run once on init)
 ├── packages/
 │   └── echo-common/            # shared: error envelope, JSON logging, audio validation,
-│                               #         app factory (/health + middleware), MIDI contract
+│                               #         app factory, MIDI contract, skyline feature extraction
 └── services/
-    ├── basic-pitch-service/      # Step 1  — audio -> MIDI                  (port 8001)
-    ├── acrcloud-service/         # Step 2A — fingerprint vs ACRCloud        (port 8002)
-    └── midi-similarity-service/  # Step 2B — composition vs private registry (port 8003)
+    ├── basic-pitch-service/      # Step 1  — audio -> MIDI                   (port 8001)
+    ├── acrcloud-service/         # Step 2A — fingerprint vs ACRCloud         (port 8002)
+    ├── midi-similarity-service/  # Step 2B — composition vs registry (compute) (port 8003)
+    └── registry-service/         # private registry of sealed tracks (owns DB) (port 8004)
 ```
 
-Still to come: Step 3 (commercial disambiguation, see `docs/adr/0001`), Step 4 (report),
-storage (Walrus). Each is a new folder under `services/` reusing `echo-common`.
+`registry-service` owns the PostgreSQL registry (written at SEAL, read by
+midi-similarity for comparison). Still to come: Step 3 (commercial disambiguation, see
+`docs/adr/0001`), Step 4 (report). Each is a new folder under `services/` reusing `echo-common`.
 
 ## Run everything (Docker)
 

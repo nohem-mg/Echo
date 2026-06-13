@@ -8,8 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ECHO_MIDI_", env_file=".env")
 
-    # Private registry (PostgreSQL). Empty -> in-memory store (dev/tests).
-    database_url: str = ""
+    # registry-service base URL — source of the cached intervals to compare against.
+    registry_url: str = "http://127.0.0.1:8004"
+    registry_timeout_s: float = 10.0
 
     # Only return matches at or above this score (the CRE applies the 75 threshold).
     similarity_floor: float = 10.0

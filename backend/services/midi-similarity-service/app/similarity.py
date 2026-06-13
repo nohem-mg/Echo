@@ -26,12 +26,15 @@ from collections import Counter
 from dataclasses import dataclass
 from math import sqrt
 
-from echo_common.schemas.midi import MidiSequence
+# skyline_intervals (feature extraction) is shared via echo_common; re-exported here
+# for callers that import it from this module. Scoring stays local.
+from echo_common.midi_features import skyline_intervals
+
+__all__ = ["Score", "score_intervals", "skyline_intervals"]
 
 _NGRAM = 3
 _MIN_HOOK = 5         # min aligned intervals (=6 notes) to count as a hook
 _HOOK_REF = 12        # aligned intervals that map to a full-strength hook (100)
-_ONSET_EPS = 0.03     # notes within 30ms share an onset (chord) -> keep the top pitch
 
 
 @dataclass(frozen=True)
@@ -40,18 +43,6 @@ class Score:
     global_overlap: float   # 0-100
     hook: float             # 0-100
     hook_intervals: int     # length of the distinctive matched phrase
-
-
-def skyline_intervals(seq: MidiSequence) -> list[int]:
-    """Extract the melodic line (highest pitch per onset) as an interval sequence."""
-    notes = sorted(seq.notes, key=lambda n: (n.start_s, -n.pitch))
-    melody: list[int] = []
-    last_onset = None
-    for n in notes:
-        if last_onset is None or n.start_s - last_onset > _ONSET_EPS:
-            melody.append(n.pitch)        # new onset -> its highest note (skyline)
-            last_onset = n.start_s
-    return [melody[i + 1] - melody[i] for i in range(len(melody) - 1)]
 
 
 def _is_trivial(pattern: tuple[int, ...]) -> bool:

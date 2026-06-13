@@ -5,12 +5,7 @@ from __future__ import annotations
 from echo_common.log import get_logger
 from fastapi import APIRouter, Request
 
-from .schemas import (
-    ComparePrivateRequest,
-    ComparePrivateResponse,
-    RegisterRequest,
-    RegisterResponse,
-)
+from .schemas import ComparePrivateRequest, ComparePrivateResponse
 from .service import MidiSimilarityService
 
 logger = get_logger(__name__)
@@ -26,7 +21,7 @@ def _service(request: Request) -> MidiSimilarityService:
 async def compare_private(
     request: Request, body: ComparePrivateRequest
 ) -> ComparePrivateResponse:
-    """Step 2B — compositional similarity vs the private registry."""
+    """Step 2B — compositional similarity vs the private registry (data from registry-service)."""
     matches = await _service(request).compare(body.midi_sequence)
     logger.info(
         "compare/private ok",
@@ -35,14 +30,3 @@ async def compare_private(
     return ComparePrivateResponse(
         registry_matches=matches, request_id=request.state.request_id
     )
-
-
-@router.post("/registry", response_model=RegisterResponse, tags=["registry"])
-async def register(request: Request, body: RegisterRequest) -> RegisterResponse:
-    """Add a track's melody to the private registry (ingestion path, e.g. on SEAL)."""
-    await _service(request).register(body.track_id, body.midi_sequence)
-    logger.info(
-        "registry add ok",
-        extra={"context": {"request_id": request.state.request_id, "track_id": body.track_id}},
-    )
-    return RegisterResponse(track_id=body.track_id, request_id=request.state.request_id)

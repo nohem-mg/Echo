@@ -1,36 +1,38 @@
 """Business core: compare a submission against the private registry (Step 2B).
 
-HTTP-independent and testable: the registry store is injected, so tests use the
-in-memory backend and never touch a database.
+Pure compute: it owns no data. The registry (sealed tracks) lives in registry-service;
+this service fetches the cached intervals from it and scores the query against them.
+The intervals provider is injected, so tests supply a stub and never hit the network.
 """
 
 from __future__ import annotations
 
+from typing import Awaitable, Callable
+
 from echo_common.log import get_logger
+from echo_common.midi_features import skyline_intervals
 from echo_common.schemas.midi import MidiSequence
 
 from .config import Settings
 from .schemas import RegistryMatch
-from .similarity import score_intervals, skyline_intervals
-from .store import RegistryStore
+from .similarity import score_intervals
 
 logger = get_logger(__name__)
 
+# Provider returns the registry's cached features: list of (track_id, intervals).
+IntervalsProvider = Callable[[], Awaitable[list[tuple[str, list[int]]]]]
+
 
 class MidiSimilarityService:
-    def __init__(self, store: RegistryStore, settings: Settings) -> None:
-        self._store = store
+    def __init__(self, intervals_provider: IntervalsProvider, settings: Settings) -> None:
+        self._intervals = intervals_provider
         self._s = settings
-
-    async def register(self, track_id: str, midi: MidiSequence) -> None:
-        """Store the full MIDI (source of truth) + its precomputed intervals (cached feature)."""
-        await self._store.add(track_id, midi.model_dump(), skyline_intervals(midi))
 
     async def compare(self, midi: MidiSequence) -> list[RegistryMatch]:
         """Score the submission against every registered track (full scan; small registry)."""
         query = skyline_intervals(midi)
         matches: list[RegistryMatch] = []
-        for track_id, intervals in await self._store.all_intervals():
+        for track_id, intervals in await self._intervals():
             s = score_intervals(query, intervals)
             if s.similarity >= self._s.similarity_floor:
                 matches.append(

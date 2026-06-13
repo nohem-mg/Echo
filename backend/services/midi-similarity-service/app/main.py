@@ -9,9 +9,9 @@ from echo_common.log import configure_logging, get_logger
 from fastapi import FastAPI
 
 from .config import settings
+from .registry_client import RegistryClient
 from .routes import router
 from .service import MidiSimilarityService
-from .store import InMemoryRegistryStore, PostgresRegistryStore
 
 logger = get_logger(__name__)
 
@@ -19,18 +19,10 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging(settings.log_level)
-    if settings.database_url:
-        store = await PostgresRegistryStore.connect(settings.database_url)
-        logger.info("midi-similarity-service ready (postgres registry)")
-    else:
-        store = InMemoryRegistryStore()
-        logger.warning("ECHO_MIDI_DATABASE_URL not set — using in-memory registry")
-    app.state.service = MidiSimilarityService(store, settings)
-    try:
-        yield
-    finally:
-        if isinstance(store, PostgresRegistryStore):
-            await store.close()
+    registry = RegistryClient(settings.registry_url, settings.registry_timeout_s)
+    app.state.service = MidiSimilarityService(registry.all_intervals, settings)
+    logger.info("midi-similarity-service ready (registry=%s)", settings.registry_url)
+    yield
 
 
 app = create_app(
