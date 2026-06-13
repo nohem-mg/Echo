@@ -95,6 +95,16 @@ export type ReportResponse = {
 };
 
 // --------------------------------------------------------------------------
+// Confidential AI — per-agent TEE attestation (response header)
+// --------------------------------------------------------------------------
+export type AgentAttestation = {
+  /** Pipeline step identifier (e.g. step1-convert). */
+  step: string;
+  /** Opaque attestation blob from the Confidential AI enclave. */
+  attestation: string;
+};
+
+// --------------------------------------------------------------------------
 // Workflow output (handler return value / on-chain callback input)
 // --------------------------------------------------------------------------
 export type PipelineResult = {
@@ -104,6 +114,16 @@ export type PipelineResult = {
   reason?: string;
   // Full report when the pipeline completes (CLEAN or SIMILAR).
   report?: ReportResponse;
+  /** Per-agent TEE attestations collected during confidential HTTP calls. */
+  agentAttestations?: readonly AgentAttestation[];
+  /** DON-signed CRE rawReport (hex) for Registry.receiveCRECallback(). */
+  attestation?: string;
+  /** Ready-to-send callback when verdict is CLEAN (section 5 wiring). */
+  callback?: {
+    verdict: "CLEAN";
+    commitmentHash: string;
+    attestation: string;
+  };
 };
 
 // --------------------------------------------------------------------------

@@ -9,10 +9,16 @@
 // --------------------------------------------------------------------------
 // Invariants: strict fail-fast, no partial on-chain state; key/BPM from
 // raw audio; BasicPitch converts, MIDI algo compares (see AGENTS.md).
+// Confidential AI: sensitive agents run via ConfidentialHTTPClient (TEE).
 // ==========================================================================
 
 import { HTTPCapability, Runner, handler, type HTTPPayload, type Runtime } from "@chainlink/cre-sdk";
+import {
+  buildOnChainAttestation,
+  verifyAgentAttestations,
+} from "./attestation";
 import { BackendError } from "./backend";
+import { buildRegistryCallback } from "./callback";
 import { createBackendClient, type PipelineClient } from "./client";
 import {
   THRESHOLD_ACR_MIN,
@@ -21,11 +27,16 @@ import {
   type CommercialDelta,
   type PipelineInput,
   type PipelineResult,
+  type AgentAttestation,
 } from "./types";
 
 export type Config = {
   // GAGEXCM backend base URL (e.g. https://echo-backend.xyz).
   backendBaseUrl: string;
+  /** Route sensitive agents through ConfidentialHTTPClient (TEE). */
+  useConfidentialHttp?: boolean;
+  /** Vault DON secret owner (empty string for simulation). */
+  secretsOwner?: string;
 };
 
 // Minimal logger so the core DAG logic stays decoupled from the CRE runtime.
@@ -36,7 +47,40 @@ const halt = (
   input: PipelineInput,
   verdict: PipelineResult["verdict"],
   reason: string,
-): PipelineResult => ({ verdict, commitmentHash: input.commitmentHash, reason });
+  agentAttestations?: readonly AgentAttestation[],
+): PipelineResult => ({
+  verdict,
+  commitmentHash: input.commitmentHash,
+  reason,
+  agentAttestations,
+});
+
+// Attach Confidential AI evidence + DON-signed callback attestation when eligible.
+const finalizeResult = (
+  runtime: Runtime<Config>,
+  client: PipelineClient,
+  result: PipelineResult,
+): PipelineResult => {
+  const agentAttestations = client.getAgentAttestations();
+  if (agentAttestations.length === 0) {
+    return result;
+  }
+
+  verifyAgentAttestations(agentAttestations);
+  runtime.log(`Confidential AI — ${agentAttestations.length} agent attestation(s) verified`);
+
+  const withAgents: PipelineResult = { ...result, agentAttestations };
+
+  if (result.verdict !== "CLEAN" || !result.report) {
+    return withAgents;
+  }
+
+  const attestation = buildOnChainAttestation(runtime, withAgents, agentAttestations);
+  runtime.log(`CRE attestation ready for callback (${attestation.slice(0, 18)}…)`);
+
+  const callback = buildRegistryCallback({ ...withAgents, attestation });
+  return { ...withAgents, attestation, callback };
+};
 
 // --------------------------------------------------------------------------
 // DAG orchestration (pure: depends only on a logger + an injectable client,
@@ -65,14 +109,24 @@ export const runPipelineWithClient = (
     const plagiarism = matches.find((m) => m.confidence_score >= THRESHOLD_PLAGIARISM);
     if (plagiarism) {
       log(`STOP 2A — plagiarism (${plagiarism.confidence_score}% on ${plagiarism.ISRC})`);
-      return halt(input, "REJECTED", `ACRCloud plagiarism ${plagiarism.confidence_score}%`);
+      return halt(
+        input,
+        "REJECTED",
+        `ACRCloud plagiarism ${plagiarism.confidence_score}%`,
+        client.getAgentAttestations(),
+      );
     }
 
     // ---- Fail-fast 2B: similar to private registry ----------------------
     const similar = registryMatches.find((m) => m.similarity_score >= THRESHOLD_SIMILAR);
     if (similar) {
       log(`STOP 2B — SIMILAR (${similar.similarity_score}% vs ${similar.track_id})`);
-      return halt(input, "SIMILAR", `private registry match ${similar.similarity_score}%`);
+      return halt(
+        input,
+        "SIMILAR",
+        `private registry match ${similar.similarity_score}%`,
+        client.getAgentAttestations(),
+      );
     }
 
     // ---- Step 3 — conditional: only if 2A has matches ---------------------
@@ -106,19 +160,24 @@ export const runPipelineWithClient = (
       verdict: report.verdict,
       commitmentHash: input.commitmentHash,
       report,
+      agentAttestations: client.getAgentAttestations(),
     };
   } catch (err) {
     // Global fail-fast: any HTTP/timeout error -> ERROR, no partial state.
     const reason = err instanceof BackendError ? err.message : `pipeline error: ${String(err)}`;
     log(`STOP — ${reason}`);
-    return halt(input, "ERROR", reason);
+    return halt(input, "ERROR", reason, client.getAgentAttestations());
   }
 };
 
 // Runtime wrapper: builds the real backend client from config and runs the DAG.
 export const runPipeline = (runtime: Runtime<Config>, input: PipelineInput): PipelineResult => {
-  const client = createBackendClient(runtime, runtime.config.backendBaseUrl);
-  return runPipelineWithClient((m) => runtime.log(m), client, input);
+  const client = createBackendClient(runtime, runtime.config.backendBaseUrl, {
+    useConfidentialHttp: runtime.config.useConfidentialHttp,
+    secretsOwner: runtime.config.secretsOwner,
+  });
+  const result = runPipelineWithClient((m) => runtime.log(m), client, input);
+  return finalizeResult(runtime, client, result);
 };
 
 // --------------------------------------------------------------------------
@@ -127,6 +186,9 @@ export const runPipeline = (runtime: Runtime<Config>, input: PipelineInput): Pip
 const onSubmission = (runtime: Runtime<Config>, payload: HTTPPayload): PipelineResult => {
   const input = JSON.parse(new TextDecoder().decode(payload.input)) as PipelineInput;
   runtime.log(`Echo — new submission (commitment ${input.commitmentHash.slice(0, 10)}…)`);
+  if (runtime.config.useConfidentialHttp) {
+    runtime.log("Confidential AI — sensitive agents routed via ConfidentialHTTPClient");
+  }
   return runPipeline(runtime, input);
 };
 

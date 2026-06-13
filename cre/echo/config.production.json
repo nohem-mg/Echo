@@ -1,3 +1,5 @@
 {
-  "backendBaseUrl": "https://echo-backend.example.com"
+  "backendBaseUrl": "https://echo-backend.example.com",
+  "useConfidentialHttp": true,
+  "secretsOwner": ""
 }

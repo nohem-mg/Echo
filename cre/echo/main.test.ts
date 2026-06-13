@@ -57,6 +57,7 @@ const makeClient = (opts: {
     compareCommercial: () =>
       guard("compareCommercial", { commercial_deltas: opts.commercial ?? [] }),
     report: () => guard("report", opts.report ?? REPORT),
+    getAgentAttestations: () => [],
   };
   return { client, calls };
 };
@@ -181,7 +182,10 @@ describe("happy path", () => {
 
 describe("initWorkflow", () => {
   test("registers a single handler on the HTTP trigger", () => {
-    const config: Config = { backendBaseUrl: "http://localhost:8080" };
+    const config: Config = {
+      backendBaseUrl: "http://localhost:8080",
+      useConfidentialHttp: true,
+    };
 
     const handlers = initWorkflow(config);
 
