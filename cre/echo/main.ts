@@ -23,6 +23,13 @@ import { createBackendClient, type PipelineClient } from "./client";
 import { dispatchOnChainCallback } from "./evm-callback";
 import { parsePipelineInput } from "./parse-input";
 import {
+  createPipelineEventSink,
+  notifyPipelineCompletion,
+  noopPipelineEvents,
+  type PipelineEventSink,
+  type PipelineEventsConfig,
+} from "./pipeline-events";
+import {
   THRESHOLD_ACR_MIN,
   THRESHOLD_PLAGIARISM,
   THRESHOLD_SIMILAR,
@@ -32,7 +39,7 @@ import {
   type AgentAttestation,
 } from "./types";
 
-export type Config = {
+export type Config = PipelineEventsConfig & {
   // GAGEXCM backend base URL (e.g. https://echo-backend.xyz).
   backendBaseUrl: string;
   /** Route sensitive agents through ConfidentialHTTPClient (TEE). */
@@ -41,10 +48,8 @@ export type Config = {
   secretsOwner?: string;
   /**
    * Registry contract address on Ethereum Sepolia (Cyriac deploy).
-   * When set, the DON-signed report is dispatched on-chain for all
-   * non-ERROR verdicts. Leave unset to skip the EVM write (simulation mode).
-   *
-   * TODO: replace placeholder once Cyriac deploys the Registry contract.
+   * When set, the DON-signed report is dispatched on-chain for CLEAN only.
+   * Leave unset to skip the EVM write (simulation mode).
    */
   registryAddress?: string;
   /** Gas limit for EVMClient.writeReport (MockKeystoneForwarder routing). */
@@ -83,11 +88,12 @@ const halt = (
   verdict,
   trackId: input.trackId,
   commitmentHash: input.commitmentHash,
+  registryRef: input.registryRef,
   reason,
   agentAttestations,
 });
 
-// Build DON-signed report + dispatch on-chain callback for all non-ERROR verdicts.
+// Build DON-signed report + dispatch on-chain callback for CLEAN only.
 const finalizeResult = (
   runtime: Runtime<Config>,
   client: PipelineClient,
@@ -110,10 +116,16 @@ const finalizeResult = (
   const { attestation, report } = buildOnChainAttestation(runtime, withAgents);
   runtime.log(`CRE attestation ready for callback (${attestation.slice(0, 18)}…)`);
 
+  if (withAgents.verdict !== "CLEAN") {
+    runtime.log(`${withAgents.verdict} verdict — no on-chain seal was created`);
+    return { ...withAgents, attestation };
+  }
+
   // Dispatch on-chain when Cyriac provides a real Registry address (not zero / placeholder).
   const registry = runtime.config.registryAddress?.toLowerCase();
+  let registryTxHash: string | undefined;
   if (registry && registry !== "0x0000000000000000000000000000000000000000") {
-    dispatchOnChainCallback(
+    registryTxHash = dispatchOnChainCallback(
       runtime,
       runtime.config.registryAddress!,
       report,
@@ -121,13 +133,8 @@ const finalizeResult = (
     );
   }
 
-  // PipelineResult.callback is only set for CLEAN (the SEALED entry on-chain).
-  if (withAgents.verdict !== "CLEAN" || !withAgents.report) {
-    return { ...withAgents, attestation };
-  }
-
   const callback = buildRegistryCallback({ ...withAgents, attestation });
-  return { ...withAgents, attestation, callback };
+  return { ...withAgents, attestation, callback, registryTxHash };
 };
 
 // --------------------------------------------------------------------------
@@ -138,17 +145,24 @@ export const runPipelineWithClient = (
   log: Logger,
   client: PipelineClient,
   input: PipelineInput,
+  events: PipelineEventSink = noopPipelineEvents,
 ): PipelineResult => {
   try {
+    const updateStep = (stepKey: string, event: Omit<Parameters<PipelineEventSink["updateStep"]>[1], "stepKey">) =>
+      events.updateStep(input, { stepKey, ...event });
     log(`Input — trackId=${input.trackId}  audioRef=${input.audioRef}`);
 
     // ---- Step 1 — audio -> MIDI conversion (prerequisite for 2A and 2B) --
     log("Step 1 — audio -> MIDI conversion (BasicPitch)");
+    updateStep("01", { status: "running", progress: 10, meta: "BasicPitch conversion" });
     const { midiSequence } = client.convert(input.audioRef).result();
     log(`Step 1 OK — midiSequence: ${summarizeMidiRef(midiSequence)}`);
+    updateStep("01", { status: "done", progress: 100, meta: "MIDI generated" });
 
     // ---- Step 2 — 2A ∥ 2B ------------------------------------------------
     log("Step 2 — parallel comparison 2A ∥ 2B");
+    updateStep("02A", { status: "running", progress: 20, meta: "ACRCloud running" });
+    updateStep("02B", { status: "running", progress: 20, meta: "Private registry running" });
     const handle2a = client.checkPublic(input.audioRef);
     const handle2b = client.comparePrivate(midiSequence);
     const matches = handle2a.result().matches;
@@ -160,6 +174,13 @@ export const runPipelineWithClient = (
     const plagiarism = matches.find((m) => m.confidence_score >= THRESHOLD_PLAGIARISM);
     if (plagiarism) {
       log(`STOP 2A — plagiarism (${plagiarism.confidence_score}% on ${plagiarism.ISRC})`);
+      updateStep("02A", {
+        status: "blocked",
+        progress: 100,
+        meta: `Match: ${plagiarism.confidence_score}%`,
+        reason: `ACRCloud plagiarism ${plagiarism.confidence_score}%`,
+      });
+      updateStep("02B", { status: "done", progress: 100, meta: `${registryMatches.length} private match(es)` });
       return halt(
         input,
         "REJECTED",
@@ -172,6 +193,13 @@ export const runPipelineWithClient = (
     const similar = registryMatches.find((m) => m.similarity_score >= THRESHOLD_SIMILAR);
     if (similar) {
       log(`STOP 2B — SIMILAR (${similar.similarity_score}% vs ${similar.track_id})`);
+      updateStep("02A", { status: "done", progress: 100, meta: `${matches.length} public match(es)` });
+      updateStep("02B", {
+        status: "blocked",
+        progress: 100,
+        meta: `Match: ${similar.similarity_score}%`,
+        reason: `private registry match ${similar.similarity_score}%`,
+      });
       return halt(
         input,
         "SIMILAR",
@@ -179,6 +207,8 @@ export const runPipelineWithClient = (
         client.getAgentAttestations(),
       );
     }
+    updateStep("02A", { status: "done", progress: 100, meta: `${matches.length} public match(es)` });
+    updateStep("02B", { status: "done", progress: 100, meta: `${registryMatches.length} private match(es)` });
 
     // ---- Step 3 — conditional: only if 2A has matches ---------------------
     // (>=50% only; <50% -> Step 3 skipped.)
@@ -189,15 +219,19 @@ export const runPipelineWithClient = (
     let commercialDeltas: CommercialDelta[] = [];
     if (eligibleISRCs.length > 0) {
       log(`Step 3 — MIDI comparison vs ISRCs: ${eligibleISRCs.join(", ")}`);
+      updateStep("03", { status: "running", progress: 20, meta: `${eligibleISRCs.length} candidate(s)` });
       commercialDeltas = client.compareCommercial(midiSequence, eligibleISRCs).result()
         .commercial_deltas;
       log(`Step 3 OK — ${commercialDeltas.length} commercial delta(s)`);
+      updateStep("03", { status: "done", progress: 100, meta: `${commercialDeltas.length} delta(s)` });
     } else {
       log("Step 3 — skipped (no ACRCloud match >= 50%)");
+      updateStep("03", { status: "done", progress: 100, meta: "Skipped" });
     }
 
     // ---- Step 4 — waits for 2B AND 3: acoustic extraction + report -------
     log("Step 4 — acoustic extraction (raw audio) + final report");
+    updateStep("04", { status: "running", progress: 20, meta: "Generating report" });
     const report = client
       .report({
         audioRef: input.audioRef,
@@ -216,6 +250,7 @@ export const runPipelineWithClient = (
     log(`  ai_summary: ${report.ai_summary}`);
 
     log(`Final verdict: ${report.verdict}`);
+    updateStep("04", { status: "done", progress: 100, meta: report.verdict });
 
     // SEAL — persist in private registry before on-chain callback (CLEAN only).
     if (report.verdict === "CLEAN") {
@@ -232,6 +267,7 @@ export const runPipelineWithClient = (
       verdict: report.verdict,
       trackId: input.trackId,
       commitmentHash: input.commitmentHash,
+      registryRef: input.registryRef,
       report,
       agentAttestations: client.getAgentAttestations(),
     };
@@ -239,6 +275,7 @@ export const runPipelineWithClient = (
     // Global fail-fast: any HTTP/timeout error -> ERROR, no partial state.
     const reason = err instanceof BackendError ? err.message : `pipeline error: ${String(err)}`;
     log(`STOP — ${reason}`);
+    events.updateStep(input, { stepKey: "04", status: "error", progress: 100, reason });
     return halt(input, "ERROR", reason, client.getAgentAttestations());
   }
 };
@@ -249,8 +286,20 @@ export const runPipeline = (runtime: Runtime<Config>, input: PipelineInput): Pip
     useConfidentialHttp: runtime.config.useConfidentialHttp,
     secretsOwner: runtime.config.secretsOwner,
   });
-  const result = runPipelineWithClient((m) => runtime.log(m), client, input);
-  return finalizeResult(runtime, client, result);
+  const events = createPipelineEventSink(runtime, runtime.config);
+  const result = runPipelineWithClient((m) => runtime.log(m), client, input, events);
+
+  let finalized: PipelineResult;
+  try {
+    finalized = finalizeResult(runtime, client, result);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    runtime.log(`STOP — finalization failed: ${reason}`);
+    finalized = halt(input, "ERROR", `finalization failed: ${reason}`, client.getAgentAttestations());
+  }
+
+  notifyPipelineCompletion(runtime, runtime.config, input, finalized);
+  return finalized;
 };
 
 // --------------------------------------------------------------------------

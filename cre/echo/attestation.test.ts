@@ -126,10 +126,10 @@ describe("buildRegistryCallback", () => {
     });
   });
 
-  test("returns callback for SIMILAR and REJECTED with attestation", () => {
+  test("returns undefined for SIMILAR and REJECTED with attestation", () => {
     const base = { trackId: "0xtrack", commitmentHash: "0xabc", attestation: "0xproof" };
-    expect(buildRegistryCallback({ ...base, verdict: "SIMILAR" })?.verdict).toBe("SIMILAR");
-    expect(buildRegistryCallback({ ...base, verdict: "REJECTED" })?.verdict).toBe("REJECTED");
+    expect(buildRegistryCallback({ ...base, verdict: "SIMILAR" })).toBeUndefined();
+    expect(buildRegistryCallback({ ...base, verdict: "REJECTED" })).toBeUndefined();
   });
 
   test("returns undefined for ERROR or missing attestation", () => {

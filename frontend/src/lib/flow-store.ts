@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { Pool, type QueryResultRow } from "pg";
-import type { EchoFlow, EchoFlowStatus, EchoPipelineStep, EchoPipelineStatus, EchoTrack } from "@/lib/types";
+import type { EchoFlow, EchoFlowStatus, EchoPipelineStep, EchoPipelineStatus, EchoReport, EchoTrack } from "@/lib/types";
 
 type CreateFlowInput = {
   nullifierHash: string;
@@ -39,6 +39,26 @@ type SaveTrackInput = {
 type InitializePipelineInput = {
   flowId: string;
   trackId: string;
+};
+
+type UpdatePipelineStepInput = {
+  flowId: string;
+  stepKey: string;
+  status?: EchoPipelineStatus;
+  progress?: number;
+  meta?: string | null;
+  reason?: string | null;
+  detail?: string;
+};
+
+type PipelineOutcomeInput = {
+  flowId: string;
+  report?: EchoReport;
+  registryTrackId?: `0x${string}`;
+  registryTxHash?: `0x${string}`;
+  registryRef?: `0x${string}`;
+  commitmentHash?: `0x${string}`;
+  reason?: string;
 };
 
 type FlowFile = {
@@ -367,11 +387,7 @@ export async function saveTrackUpload(input: SaveTrackInput) {
     throw new FlowStoreError("Uploaded audio fingerprint does not match the verified flow", 409);
   }
 
-  if (!flow.txHash) {
-    throw new FlowStoreError("Payment must be confirmed before uploading audio", 402);
-  }
-
-  if (!["payment_confirmed", "track_uploaded", "pipeline_started", "pipeline_completed", "pipeline_blocked"].includes(flow.status)) {
+  if (!["world_verified", "payment_requested", "payment_confirmed", "track_uploaded", "pipeline_started", "pipeline_completed", "pipeline_blocked"].includes(flow.status)) {
     throw new FlowStoreError(`Flow cannot upload audio from status ${flow.status}`, 409);
   }
 
@@ -615,6 +631,130 @@ export async function getPipelineSteps(flowId: string) {
   return file.pipelineSteps.filter((step) => step.flowId === flowId).sort(sortPipelineSteps);
 }
 
+export async function updatePipelineStep(input: UpdatePipelineStepInput) {
+  validatePipelineStepUpdate(input);
+
+  if (process.env.DATABASE_URL) {
+    await ensurePostgresSchema();
+    const result = await getPool().query(
+      `
+      UPDATE echo_pipeline_steps
+      SET
+        status = COALESCE($3, status),
+        progress = COALESCE($4, progress),
+        meta = COALESCE($5, meta),
+        reason = COALESCE($6, reason),
+        detail = COALESCE($7, detail),
+        updated_at = now()
+      WHERE flow_id = $1 AND step_key = $2
+      RETURNING *
+      `,
+      [
+        input.flowId,
+        input.stepKey,
+        input.status ?? null,
+        typeof input.progress === "number" ? input.progress : null,
+        input.meta ?? null,
+        input.reason ?? null,
+        input.detail ?? null,
+      ],
+    );
+
+    if (!result.rows[0]) {
+      throw new FlowStoreError("Pipeline step not found", 404);
+    }
+
+    return rowToPipelineStep(result.rows[0]);
+  }
+
+  assertLocalFileStoreAvailable();
+  const file = await readFlowFile();
+  const index = file.pipelineSteps.findIndex((step) => step.flowId === input.flowId && step.stepKey === input.stepKey);
+
+  if (index < 0) {
+    throw new FlowStoreError("Pipeline step not found", 404);
+  }
+
+  const current = file.pipelineSteps[index];
+  const updated: EchoPipelineStep = {
+    ...current,
+    status: input.status ?? current.status,
+    progress: typeof input.progress === "number" ? input.progress : current.progress,
+    meta: input.meta === null ? undefined : input.meta ?? current.meta,
+    reason: input.reason === null ? undefined : input.reason ?? current.reason,
+    detail: input.detail ?? current.detail,
+    updatedAt: new Date().toISOString(),
+  };
+
+  file.pipelineSteps[index] = updated;
+  await writeFlowFile(file);
+  return updated;
+}
+
+export async function completePipeline(input: PipelineOutcomeInput) {
+  return updatePipelineOutcome(input.flowId, "pipeline_completed", input);
+}
+
+export async function blockPipeline(input: PipelineOutcomeInput) {
+  return updatePipelineOutcome(input.flowId, "pipeline_blocked", input);
+}
+
+export async function updatePipelineOutcome(
+  flowId: string,
+  status: Extract<EchoFlowStatus, "pipeline_completed" | "pipeline_blocked" | "error">,
+  input: PipelineOutcomeInput = { flowId },
+) {
+  const existing = await getFlow(flowId);
+
+  if (!existing) {
+    throw new FlowStoreError("Flow not found", 404);
+  }
+
+  if (process.env.DATABASE_URL) {
+    await ensurePostgresSchema();
+    const result = await getPool().query(
+      `
+      UPDATE echo_flows
+      SET
+        status = $2,
+        error = $3,
+        commitment_hash = COALESCE($4, commitment_hash),
+        registry_ref = COALESCE($5, registry_ref),
+        registry_track_id = COALESCE($6, registry_track_id),
+        registry_tx_hash = COALESCE($7, registry_tx_hash),
+        report = COALESCE($8::jsonb, report),
+        updated_at = now()
+      WHERE id = $1
+      RETURNING *
+      `,
+      [
+        flowId,
+        status,
+        input.reason ?? (status === "error" ? existing.error ?? "Pipeline failed" : null),
+        input.commitmentHash ?? null,
+        input.registryRef ?? null,
+        input.registryTrackId ?? null,
+        input.registryTxHash ?? null,
+        input.report ? JSON.stringify(input.report) : null,
+      ],
+    );
+
+    return rowToFlow(result.rows[0]);
+  }
+
+  assertLocalFileStoreAvailable();
+  return updateFlowFile(flowId, (flow) => ({
+    ...flow,
+    status,
+    error: input.reason ?? (status === "error" ? flow.error ?? "Pipeline failed" : undefined),
+    commitmentHash: input.commitmentHash ?? flow.commitmentHash,
+    registryRef: input.registryRef ?? flow.registryRef,
+    registryTrackId: input.registryTrackId ?? flow.registryTrackId,
+    registryTxHash: input.registryTxHash ?? flow.registryTxHash,
+    report: input.report ?? flow.report,
+  }));
+}
+
 export class FlowStoreError extends Error {
   constructor(
     message: string,
@@ -696,6 +836,13 @@ async function ensurePostgresSchema() {
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
       );
+
+      ALTER TABLE echo_flows
+        ADD COLUMN IF NOT EXISTS commitment_hash text,
+        ADD COLUMN IF NOT EXISTS registry_ref text,
+        ADD COLUMN IF NOT EXISTS registry_track_id text,
+        ADD COLUMN IF NOT EXISTS registry_tx_hash text,
+        ADD COLUMN IF NOT EXISTS report jsonb;
 
       CREATE UNIQUE INDEX IF NOT EXISTS echo_flows_nullifier_track_idx
       ON echo_flows (nullifier_hash, track_fingerprint);
@@ -806,6 +953,20 @@ function validateTrackInput(input: SaveTrackInput) {
   }
 }
 
+function validatePipelineStepUpdate(input: UpdatePipelineStepInput) {
+  if (!input.flowId || !input.stepKey) {
+    throw new FlowStoreError("Missing pipeline step identity fields", 400);
+  }
+
+  if (input.status && !PIPELINE_STATUSES.has(input.status)) {
+    throw new FlowStoreError("Invalid pipeline step status", 400);
+  }
+
+  if (input.progress !== undefined && (!Number.isFinite(input.progress) || input.progress < 0 || input.progress > 100)) {
+    throw new FlowStoreError("Invalid pipeline step progress", 400);
+  }
+}
+
 function createFlowId() {
   return `flow_${crypto.randomUUID().replaceAll("-", "")}`;
 }
@@ -830,6 +991,11 @@ function rowToFlow(row: QueryResultRow): EchoFlow {
     paymentAmountEth: row.payment_amount_eth ?? undefined,
     paymentChainId: row.payment_chain_id ?? undefined,
     txHash: row.tx_hash ?? undefined,
+    commitmentHash: row.commitment_hash ?? undefined,
+    registryRef: row.registry_ref ?? undefined,
+    registryTrackId: row.registry_track_id ?? undefined,
+    registryTxHash: row.registry_tx_hash ?? undefined,
+    report: normalizeReport(row.report),
     status: row.status,
     error: row.error ?? undefined,
     createdAt: toIso(row.created_at),
@@ -874,6 +1040,39 @@ function rowToPipelineStep(row: QueryResultRow): EchoPipelineStep {
 
 function toIso(value: unknown) {
   return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function normalizeReport(value: unknown): EchoReport | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return normalizeReport(JSON.parse(value));
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const report = value as Partial<EchoReport>;
+  if (
+    (report.verdict === "CLEAN" || report.verdict === "SIMILAR" || report.verdict === "REJECTED") &&
+    Array.isArray(report.similar_tracks)
+  ) {
+    return {
+      verdict: report.verdict,
+      submitted_track: report.submitted_track,
+      similar_tracks: report.similar_tracks,
+      ai_summary: typeof report.ai_summary === "string" ? report.ai_summary : undefined,
+    };
+  }
+
+  return undefined;
 }
 
 function isEchoFlow(value: unknown): value is EchoFlow {

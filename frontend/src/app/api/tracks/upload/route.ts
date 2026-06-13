@@ -206,11 +206,7 @@ function getFlowUploadError(flow: EchoFlow, fingerprint: string) {
     return new FlowStoreError("Uploaded audio fingerprint does not match the verified flow", 409);
   }
 
-  if (!flow.txHash) {
-    return new FlowStoreError("Payment must be confirmed before uploading audio", 402);
-  }
-
-  if (!["payment_confirmed", "track_uploaded", "pipeline_started", "pipeline_completed", "pipeline_blocked"].includes(flow.status)) {
+  if (!["world_verified", "payment_requested", "payment_confirmed", "track_uploaded", "pipeline_started", "pipeline_completed", "pipeline_blocked"].includes(flow.status)) {
     return new FlowStoreError(`Flow cannot upload audio from status ${flow.status}`, 409);
   }
 

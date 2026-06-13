@@ -3,6 +3,7 @@ import { initWorkflow, runPipelineWithClient, type Config } from "./main";
 import { parsePipelineInput } from "./parse-input";
 import { BackendError, type Deferred } from "./backend";
 import type { PipelineClient } from "./client";
+import { buildPipelineCompletionEvent } from "./pipeline-events";
 import type {
   CheckPublicResponse,
   CommercialDelta,
@@ -16,8 +17,10 @@ import type {
 // Test helpers
 // -------------------------------------------------------------------------
 const INPUT: PipelineInput = {
+  flowId: "flow_test",
   audioRef: "https://echo-backend.local/audio/test",
   commitmentHash: "0xabc",
+  registryRef: "0xregistryref",
   worldNullifier: "0xdef",
   trackId: "0x0000000000000000000000000000000000000000000000000000000000000001",
 };
@@ -216,5 +219,45 @@ describe("initWorkflow", () => {
 
     expect(handlers).toBeArray();
     expect(handlers).toHaveLength(1);
+  });
+});
+
+describe("pipeline events", () => {
+  test("CLEAN completion carries report and certificate fields", () => {
+    const event = buildPipelineCompletionEvent(INPUT, {
+      verdict: "CLEAN",
+      trackId: INPUT.trackId,
+      commitmentHash: INPUT.commitmentHash,
+      registryRef: INPUT.registryRef,
+      registryTxHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+      report: REPORT,
+    });
+
+    expect(event).toEqual({
+      flowId: INPUT.flowId,
+      flowStatus: "pipeline_completed",
+      report: REPORT,
+      registryTrackId: INPUT.trackId,
+      registryTxHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+      registryRef: INPUT.registryRef,
+      commitmentHash: INPUT.commitmentHash,
+    });
+  });
+
+  test("blocked completion never carries Registry seal fields", () => {
+    const event = buildPipelineCompletionEvent(INPUT, {
+      verdict: "SIMILAR",
+      trackId: INPUT.trackId,
+      commitmentHash: INPUT.commitmentHash,
+      registryRef: INPUT.registryRef,
+      reason: "private registry match 82%",
+    });
+
+    expect(event).toEqual({
+      flowId: INPUT.flowId,
+      flowStatus: "pipeline_blocked",
+      reason: "private registry match 82%",
+      commitmentHash: INPUT.commitmentHash,
+    });
   });
 });

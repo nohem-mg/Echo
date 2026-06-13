@@ -10,13 +10,17 @@ export type Verdict = "CLEAN" | "SIMILAR" | "REJECTED" | "ERROR";
 // Pipeline input (HTTP trigger payload)
 // --------------------------------------------------------------------------
 export type PipelineInput = {
+  // Echo frontend flow id, used only for internal /api/pipeline/events updates.
+  flowId?: string;
   // Raw audio reference (signed backend URL or opaque storage ref).
   audioRef: string;
   // keccak256(fingerprint + JSON profile) — sealed on-chain at registration.
   commitmentHash: string;
+  // keccak256(track_id) from the PostgreSQL registry row, persisted by frontend.
+  registryRef?: string;
   // World ID nullifier (anti-Sybil), passed through to the callback.
   worldNullifier: string;
-  // bytes32 trackId returned by Registry.registerTrack() — passed to receiveCRECallback().
+  // Registry bytes32 trackId consumed by Registry.onReport().
   trackId: string;
 };
 
@@ -127,9 +131,13 @@ export type PipelineResult = {
   report?: ReportResponse;
   /** Per-agent TEE attestations collected during confidential HTTP calls. */
   agentAttestations?: readonly AgentAttestation[];
-  /** DON-signed CRE rawReport (hex) for Registry.receiveCRECallback(). */
+  /** DON-signed CRE rawReport (hex) for Registry.onReport(). */
   attestation?: string;
-  /** Ready-to-send callback payload (set for all non-ERROR verdicts after dispatch). */
+  /** Sepolia tx hash returned by EVMClient.writeReport when available. */
+  registryTxHash?: string;
+  /** Registry reference persisted by the backend/frontend for the certificate. */
+  registryRef?: string;
+  /** Ready-to-send callback payload (set only for CLEAN after dispatch). */
   callback?: {
     trackId: string;
     verdict: Verdict;
@@ -146,7 +154,7 @@ export const THRESHOLD_ACR_MIN = 50; //    2A: <50% -> Step 3 skipped
 
 // --------------------------------------------------------------------------
 // Registry.Status enum (Solidity: SEALED=0, REVEALED=1, SIMILAR=2, REJECTED=3)
-// Maps our pipeline Verdict -> uint8 for receiveCRECallback().
+// Maps our pipeline Verdict -> uint8 inside Registry.onReport().
 // --------------------------------------------------------------------------
 export const VERDICT_TO_STATUS: Record<string, number> = {
   CLEAN: 0,    // SEALED

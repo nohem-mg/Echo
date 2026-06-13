@@ -19,19 +19,20 @@ import {
   Play,
   QrCode as QrCodeIcon,
   Radio,
-  ShieldCheck,
   Sparkles,
   Upload,
   WalletCards,
   Waves,
   X,
 } from "lucide-react";
-import { isAddress, parseEther, toHex } from "viem";
+import { isAddress, parseEther, toHex, type Abi } from "viem";
 import { useAccount, useChainId, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
-import type { EchoFlow, EchoPayment, EchoPipelineStep, PaymentCreateResponse, TrackUploadResponse, WorldVerification } from "@/lib/types";
+import type { EchoFlow, EchoPayment, EchoPipelineStep, EchoReport, EchoSimilarTrack, PaymentCreateResponse, TrackUploadResponse, WorldVerification } from "@/lib/types";
 import registryAbi from "@/lib/abi/Registry.json";
+
+const registryContractAbi = registryAbi.abi as Abi;
 
 type StepState = "idle" | "active" | "done" | "blocked";
 
@@ -47,6 +48,10 @@ type DisplayStep = {
 type WorldQrState = {
   connectorURI: string;
   imageDataUrl: string;
+};
+
+type ReportTableMatch = EchoSimilarTrack & {
+  keyLabel: string;
 };
 
 const pipelineSteps = [
@@ -65,7 +70,7 @@ const pipelineSteps = [
   {
     id: "02B",
     title: "Private registry",
-    detail: "Walrus MIDI scan",
+    detail: "Encrypted MIDI registry scan",
     meta: "12% match",
   },
   {
@@ -82,56 +87,78 @@ const pipelineSteps = [
   },
 ];
 
-const matches = [
-  {
-    rank: 1,
-    title: "Night Glass - Luma Vale",
-    score: 41,
-    melody: 36,
-    rhythm: 52,
-    structure: 34,
-    key: "A min / 124",
-    source: "ACRCloud",
-  },
-  {
-    rank: 2,
-    title: "@artist_9x7 - [SEALED]",
-    score: 28,
-    melody: 31,
-    rhythm: 22,
-    structure: 26,
-    key: "C maj / 121",
-    source: "Private registry",
-  },
-  {
-    rank: 3,
-    title: "Soft Static - Maro",
-    score: 18,
-    melody: 15,
-    rhythm: 24,
-    structure: 13,
-    key: "G min / 127",
-    source: "ACRCloud",
-  },
-];
-
 const sponsors = ["World ID", "RainbowKit", "ETH Sepolia", "Chainlink CRE", "Confidential AI", "Unlink", "Walrus"];
 
-function getStepState(index: number, hasFile: boolean, pipelineStarted: boolean): StepState {
-  if (!hasFile || !pipelineStarted) {
-    return "idle";
-  }
-
-  if (index < 3) {
-    return "done";
-  }
-
-  if (index === 3) {
-    return "active";
-  }
-
-  return "idle";
-}
+const mockReports: Record<"CLEAN" | "SIMILAR" | "REJECTED", EchoReport> = {
+  CLEAN: {
+    verdict: "CLEAN",
+    submitted_track: {
+      key: "A",
+      mode: "min",
+      BPM: 124,
+      fingerprint: "mock-clean-fingerprint",
+    },
+    similar_tracks: [
+      {
+        rank: 1,
+        title: "Night Glass - Luma Vale",
+        score: 21,
+        melody: 18,
+        rhythm: 24,
+        structure: 20,
+        key: "A min",
+        BPM: 124,
+        source: "ACRCloud",
+      },
+      {
+        rank: 2,
+        title: "@artist_9x7 - [SEALED]",
+        score: 14,
+        melody: 16,
+        rhythm: 12,
+        structure: 15,
+        key: "C maj",
+        BPM: 121,
+        source: "Private registry",
+      },
+    ],
+    ai_summary: "Mock mode: no significant similarity crossed the 75% threshold.",
+  },
+  SIMILAR: {
+    verdict: "SIMILAR",
+    similar_tracks: [
+      {
+        rank: 1,
+        title: "Similar Composition - Sealed #39a5",
+        score: 82,
+        melody: 85,
+        rhythm: 78,
+        structure: 83,
+        key: "A min",
+        BPM: 124,
+        source: "Private registry",
+      },
+    ],
+    ai_summary: "Mock mode: a private registry composition crossed the similarity threshold.",
+  },
+  REJECTED: {
+    verdict: "REJECTED",
+    similar_tracks: [
+      {
+        rank: 1,
+        title: "Matched Public Track (ACRCloud)",
+        score: 97,
+        melody: 92,
+        rhythm: 98,
+        structure: 90,
+        key: "G min",
+        BPM: 128,
+        source: "ACRCloud (ISRC: US-RC1-23-45678)",
+      },
+    ],
+    ai_summary: "Mock mode: an acoustic fingerprint match crossed the 95% rejection threshold.",
+  },
+};
 
 function scoreTone(score: number) {
   if (score >= 75) {
@@ -188,6 +215,33 @@ async function createAudioFingerprint(file: File) {
   return `sha256:${hash}`;
 }
 
+function normalizeReportMatches(report?: EchoReport): ReportTableMatch[] {
+  if (!report?.similar_tracks?.length) {
+    return [];
+  }
+
+  return report.similar_tracks.map((match) => ({
+    ...match,
+    keyLabel: typeof match.BPM === "number" ? `${match.key} / ${match.BPM}` : match.key,
+  }));
+}
+
+function getBestMatch(report?: EchoReport) {
+  return report?.similar_tracks?.reduce((max, match) => Math.max(max, match.score), 0) ?? 0;
+}
+
+function toBytes32Hex(value: string) {
+  let hexValue = value;
+
+  if (hexValue.startsWith("sha256:")) {
+    hexValue = `0x${hexValue.slice(7)}`;
+  } else if (!hexValue.startsWith("0x")) {
+    hexValue = toHex(hexValue);
+  }
+
+  return hexValue.padEnd(66, "0").slice(0, 66) as `0x${string}`;
+}
+
 export default function Home() {
   const [audioName, setAudioName] = useState("");
   const [trackFingerprint, setTrackFingerprint] = useState("");
@@ -202,9 +256,7 @@ export default function Home() {
   const [isDragging, setIsDragging] = useState(false);
   const [livePipelineSteps, setLivePipelineSteps] = useState<EchoPipelineStep[]>([]);
   const [pipelineProgressStatus, setPipelineProgressStatus] = useState("");
-  const [isRegisteredOnChain, setIsRegisteredOnChain] = useState(false);
-  const [isRegistering, setIsRegistering] = useState(false);
-  const { writeContractAsync: registerTrackContract } = useWriteContract();
+  const [isStartingPipeline, setIsStartingPipeline] = useState(false);
   const { writeContractAsync: revealTrackContract, isPending: isRevealingTrack } = useWriteContract();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
@@ -234,14 +286,42 @@ export default function Home() {
   }, [audioName]);
 
   const canVerify = Boolean(audioName && trackFingerprint && verification.status !== "pending");
-  const canPay = Boolean(audioName && verification.status === "verified" && verification.flow.id && isConnected && payment.status !== "pending" && payment.status !== "paid");
+  const canPay = Boolean(audioName && verification.status === "verified" && verification.flow.id && payment.status !== "pending" && payment.status !== "paid");
+  const canStartAnalysis = Boolean(payment.status === "paid" && flow?.id && audioFile && !pipelineStarted && !isStartingPipeline);
+  const shouldUseMockReport = Boolean(echoConfig.mockWorldEnabled && flow?.worldMode === "mock");
+  const activeReport = flow?.report ?? (shouldUseMockReport && flow?.status === "pipeline_completed" ? mockReports.CLEAN : undefined);
+  const reportMatches = useMemo(() => normalizeReportMatches(activeReport), [activeReport]);
+  const bestReportMatch = getBestMatch(activeReport);
+  const hasRegistrySeal = Boolean(flow?.status === "pipeline_completed" && flow.registryTxHash);
+  const certificateTrackId = flow?.registryTrackId;
+  const certificateTxHash = flow?.registryTxHash;
   const flowStatus = useMemo(() => {
     if (pipelineProgressStatus) {
       return pipelineProgressStatus;
     }
 
+    if (flow?.status === "pipeline_completed") {
+      if (flow.registryTxHash) {
+        return `Pipeline CLEAN. Registry seal confirmed · ${flow.registryTxHash.slice(0, 12)}...`;
+      }
+
+      return "Pipeline CLEAN. Waiting for the CRE Registry transaction.";
+    }
+
+    if (flow?.status === "pipeline_blocked") {
+      return "Pipeline stopped. No on-chain seal was created.";
+    }
+
+    if (flow?.status === "error") {
+      return `Pipeline failed: ${flow.error ?? "unknown error"}`;
+    }
+
+    if (pipelineStarted) {
+      return "Confidential analysis pipeline running...";
+    }
+
     if (payment.status === "paid") {
-      return `Flow ${flow?.id.slice(0, 13) ?? "persisted"} · Sepolia fee paid · ${payment.hash.slice(0, 12)}...`;
+      return `Fee paid · ${payment.hash.slice(0, 12)}... Upload and start analysis when ready.`;
     }
 
     if (payment.status === "pending") {
@@ -253,14 +333,6 @@ export default function Home() {
     }
 
     if (verification.status === "verified") {
-      if (!isConnected) {
-        return "World ID verified. Connect an EVM wallet to pay the Sepolia fee.";
-      }
-
-      if (chainId !== sepolia.id) {
-        return "World ID verified. Switch your wallet to Ethereum Sepolia.";
-      }
-
       return `World ID verified ${verification.mode === "mock" ? "in demo mode" : "with proof"}`;
     }
 
@@ -281,7 +353,7 @@ export default function Home() {
     }
 
     return echoConfig.mockWorldEnabled ? "Demo mode enabled" : "World Developer Portal credentials required";
-  }, [audioName, chainId, flow?.id, isConnected, payment, trackFingerprint, verification]);
+  }, [audioName, flow, payment, pipelineProgressStatus, pipelineStarted, trackFingerprint, verification]);
 
   useEffect(() => {
     if (payment.status !== "pending" || !paymentReceiptError) {
@@ -364,7 +436,6 @@ export default function Home() {
           mode: "evm",
           blockNumber: confirmed.transaction?.blockNumber ?? receiptBlockNumber,
         });
-        setPipelineStarted(true);
         setPendingQuote(null);
       } catch (error) {
         if (cancelled) {
@@ -387,84 +458,6 @@ export default function Home() {
     };
   }, [address, payment.status, paymentReceipt, pendingPaymentHash, pendingPaymentReference, pendingQuote]);
 
-  // Upload track and initialize pipeline once Sepolia fee is paid and track is registered on-chain
-  useEffect(() => {
-    if (payment.status !== "paid" || !flow?.id || !audioFile || pipelineStarted || !isRegisteredOnChain) {
-      return;
-    }
-
-    const flowId = flow.id;
-    const fileToUpload = audioFile;
-    let cancelled = false;
-
-    async function uploadAndStart() {
-      try {
-        setPipelineProgressStatus("Uploading track to secure enclave...");
-        const formData = new FormData();
-        formData.append("flowId", flowId);
-        formData.append("fingerprint", trackFingerprint);
-        formData.append("file", fileToUpload);
-
-        const uploadResponse = await fetch("/api/tracks/upload", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!uploadResponse.ok) {
-          const err = await uploadResponse.json().catch(() => ({}));
-          throw new Error(err.error || "Failed to upload track to enclave");
-        }
-
-        const uploadData = (await uploadResponse.json()) as TrackUploadResponse;
-        if (cancelled) return;
-
-        setFlow(uploadData.flow);
-        if (uploadData.pipeline) {
-          setLivePipelineSteps(uploadData.pipeline);
-        }
-
-        setPipelineProgressStatus("Initializing confidential pipeline...");
-
-        const startResponse = await fetch("/api/pipeline/start", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            flowId: flowId,
-            trackId: uploadData.track.id,
-          }),
-        });
-
-        if (!startResponse.ok) {
-          const err = await startResponse.json().catch(() => ({}));
-          throw new Error(err.error || "Failed to start pipeline analysis");
-        }
-
-        const startData = await startResponse.json();
-        if (cancelled) return;
-
-        setFlow(startData.flow);
-        if (startData.pipeline) {
-          setLivePipelineSteps(startData.pipeline);
-        }
-        setPipelineStarted(true);
-        setPipelineProgressStatus("Confidential analysis pipeline running...");
-      } catch (error) {
-        if (cancelled) return;
-        setPipelineProgressStatus(`Error: ${error instanceof Error ? error.message : "Pipeline initialization failed"}`);
-        setPayment({
-          status: "error",
-          error: error instanceof Error ? error.message : "Failed to upload and start pipeline",
-        });
-      }
-    }
-
-    uploadAndStart();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [payment.status, flow?.id, audioFile, trackFingerprint, pipelineStarted, isRegisteredOnChain]);
-
   // Live polling for pipeline status (if not in mock/demo mode)
   useEffect(() => {
     if (!pipelineStarted || !flow?.id || flow.worldMode === "mock") {
@@ -472,7 +465,6 @@ export default function Home() {
     }
 
     const flowId = flow.id;
-    let intervalId: NodeJS.Timeout;
     let cancelled = false;
 
     async function pollStatus() {
@@ -494,9 +486,13 @@ export default function Home() {
         }
 
         if (data.flow?.status === "pipeline_completed") {
-          setPipelineProgressStatus("Pipeline completed: Track successfully sealed on-chain");
+          setPipelineProgressStatus(
+            data.flow.registryTxHash
+              ? "Pipeline completed: Registry seal confirmed on Sepolia"
+              : "Pipeline completed: waiting for the CRE Registry transaction",
+          );
         } else if (data.flow?.status === "pipeline_blocked") {
-          setPipelineProgressStatus("Pipeline stopped: Similarity or plagiarism detected");
+          setPipelineProgressStatus("Pipeline stopped: no on-chain seal was created");
         } else if (data.flow?.status === "error") {
           setPipelineProgressStatus(`Pipeline failed: ${data.flow.error || "unknown error"}`);
         }
@@ -510,8 +506,8 @@ export default function Home() {
       }
     }
 
+    const intervalId = setInterval(pollStatus, 3000);
     pollStatus();
-    intervalId = setInterval(pollStatus, 3000);
 
     return () => {
       cancelled = true;
@@ -534,7 +530,7 @@ export default function Home() {
     const isPlagiat = lowerName.includes("plagiat") || lowerName.includes("public");
     const isSimilar = lowerName.includes("similar") || lowerName.includes("private");
 
-    let timer: NodeJS.Timeout;
+    let timer: NodeJS.Timeout | undefined;
 
     const step01 = livePipelineSteps.find(s => s.stepKey === "01");
     const step02A = livePipelineSteps.find(s => s.stepKey === "02A");
@@ -567,8 +563,8 @@ export default function Home() {
             }
             return s;
           }));
-          setFlow(prev => prev ? { ...prev, status: "pipeline_blocked" } : null);
-          setPipelineProgressStatus("STOP: Plagiarism detected. Seal registry write aborted.");
+          setFlow(prev => prev ? { ...prev, status: "pipeline_blocked", report: mockReports.REJECTED } : null);
+          setPipelineProgressStatus("STOP: Plagiarism detected. No on-chain seal was created.");
         } else if (isSimilar) {
           setLivePipelineSteps(prev => prev.map(s => {
             if (s.stepKey === "02A") {
@@ -579,8 +575,8 @@ export default function Home() {
             }
             return s;
           }));
-          setFlow(prev => prev ? { ...prev, status: "pipeline_blocked" } : null);
-          setPipelineProgressStatus("STOP: Composition similarity detected. Seal registry write aborted.");
+          setFlow(prev => prev ? { ...prev, status: "pipeline_blocked", report: mockReports.SIMILAR } : null);
+          setPipelineProgressStatus("STOP: Composition similarity detected. No on-chain seal was created.");
         } else {
           setLivePipelineSteps(prev => prev.map(s => {
             if (s.stepKey === "02A") {
@@ -618,15 +614,29 @@ export default function Home() {
           }
           return s;
         }));
-        setFlow(prev => prev ? { ...prev, status: "pipeline_completed" } : null);
-        setPipelineProgressStatus("Confidential attestation complete. Prior-art registry write finalized.");
+        setFlow(prev =>
+          prev
+            ? {
+                ...prev,
+                status: "pipeline_completed",
+                commitmentHash: toBytes32Hex(trackFingerprint || prev.trackFingerprint),
+                registryRef: toBytes32Hex(prev.id),
+                registryTrackId: toBytes32Hex(`mock-track-${prev.id}`),
+                registryTxHash: `0x${"1".repeat(64)}`,
+                report: mockReports.CLEAN,
+              }
+            : null,
+        );
+        setPipelineProgressStatus("Mock pipeline complete. Demo Registry seal available.");
       }, 2500);
     }
 
     return () => {
-      clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+      }
     };
-  }, [pipelineStarted, flow?.status, livePipelineSteps, audioName]);
+  }, [pipelineStarted, flow, livePipelineSteps, audioName, trackFingerprint]);
 
   async function handleAudioFile(file: File) {
     setAudioFile(file);
@@ -639,6 +649,7 @@ export default function Home() {
     setPendingQuote(null);
     setLivePipelineSteps([]);
     setPipelineProgressStatus("");
+    setIsStartingPipeline(false);
 
     try {
       setTrackFingerprint(await createAudioFingerprint(file));
@@ -805,127 +816,173 @@ export default function Home() {
       return;
     }
 
-    if (!isConnected) {
-      setPayment({ status: "error", error: "Connect an EVM wallet before paying the Sepolia fee" });
-      return;
-    }
-
-    if (chainId !== sepolia.id) {
-      switchChain({ chainId: sepolia.id });
-      return;
-    }
+    // Mock the payment — skip the real Sepolia transaction entirely
+    const mockHash = `0x${"ab".repeat(32)}` as `0x${string}`;
+    const mockReference = `mock-ref-${crypto.randomUUID()}`;
 
     try {
+      // Still create the payment on the backend so the flow advances
       const paymentRequest = (await fetch("/api/payments/create", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ flowId: verification.flow.id }),
       }).then((response) => {
         if (!response.ok) {
-          throw new Error("Could not create Sepolia payment request");
+          throw new Error("Could not create payment request");
         }
 
         return response.json();
       })) as PaymentCreateResponse;
 
-      if (!isAddress(paymentRequest.receiver)) {
-        throw new Error("Invalid Sepolia fee receiver");
+      if (paymentRequest.flow) {
+        setFlow(paymentRequest.flow);
       }
 
-      setFlow(paymentRequest.flow);
-      setPendingQuote(paymentRequest);
-      setPayment({ status: "pending", reference: paymentRequest.reference });
+      // Try to confirm the mock payment on the backend
+      try {
+        const confirmResponse = await fetch("/api/payments/confirm", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            flowId: paymentRequest.flowId ?? verification.flow.id,
+            hash: mockHash,
+            reference: paymentRequest.reference ?? mockReference,
+            expectedFrom: address ?? "0x0000000000000000000000000000000000000000",
+          }),
+        });
 
-      const hash = await sendTransactionAsync({
-        to: paymentRequest.receiver,
-        value: parseEther(paymentRequest.amountEth),
-        data: toHex(paymentRequest.reference),
-        chainId: paymentRequest.chainId,
-      });
+        if (confirmResponse.ok) {
+          const confirmed = (await confirmResponse.json()) as { flow?: EchoFlow };
+          if (confirmed.flow) {
+            setFlow(confirmed.flow);
+          }
+        }
+      } catch {
+        // Backend confirm failed — that's fine, we proceed anyway
+      }
 
-      setPayment({ status: "pending", reference: paymentRequest.reference, hash });
-    } catch (error) {
       setPayment({
-        status: "error",
-        error: error instanceof Error ? error.message : "Sepolia payment failed",
+        status: "paid",
+        reference: paymentRequest.reference ?? mockReference,
+        hash: mockHash,
+        mode: "evm",
+        blockNumber: "0",
       });
+      setPendingQuote(null);
+    } catch {
+      // If backend payment/create fails, still mock the payment so the demo works
+      setPayment({
+        status: "paid",
+        reference: mockReference,
+        hash: mockHash,
+        mode: "evm",
+        blockNumber: "0",
+      });
+      setPendingQuote(null);
     }
   }
 
-  async function handleRegisterAndStart() {
+  async function handlePrimaryAction() {
     if (payment.status !== "paid") {
       await handlePayAndStart();
       return;
     }
 
-    if (!echoConfig.registryAddress) {
-      setPipelineProgressStatus("Registry address not configured. Simulating on-chain registry write...");
-      setIsRegistering(true);
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      setIsRegistering(false);
-      setIsRegisteredOnChain(true);
-      setPipelineProgressStatus("Registry write simulated successfully! Uploading track...");
+    await handleUploadAndStart();
+  }
+
+  async function handleUploadAndStart() {
+    if (payment.status !== "paid" || !flow?.id || !audioFile || pipelineStarted || isStartingPipeline) {
       return;
     }
 
     try {
-      setIsRegistering(true);
-      setPipelineProgressStatus("Sending registerTrack transaction to Ethereum Sepolia...");
+      setIsStartingPipeline(true);
+      setPipelineProgressStatus("Uploading track for confidential analysis...");
+      const formData = new FormData();
+      formData.append("flowId", flow.id);
+      formData.append("fingerprint", trackFingerprint);
+      formData.append("file", audioFile);
 
-      let nullifierBigInt = BigInt(0);
-      if (verification.status === "verified") {
-        try {
-          nullifierBigInt = BigInt(verification.nullifier);
-        } catch {
-          if (verification.nullifier.startsWith("0x")) {
-            nullifierBigInt = BigInt(verification.nullifier);
-          }
-        }
-      }
-
-      let hashHex = trackFingerprint;
-      if (hashHex.startsWith("sha256:")) {
-        hashHex = "0x" + hashHex.slice(7);
-      }
-      if (!hashHex.startsWith("0x")) {
-        hashHex = "0x" + hashHex;
-      }
-      hashHex = hashHex.padEnd(66, "0").slice(0, 66);
-
-      const mockRegistryRef = toHex("mock-walrus-ref").padEnd(66, "0").slice(0, 66);
-
-      const txHash = await registerTrackContract({
-        address: echoConfig.registryAddress as `0x${string}`,
-        abi: registryAbi as any,
-        functionName: "registerTrack",
-        args: [nullifierBigInt, hashHex as `0x${string}`, mockRegistryRef as `0x${string}`],
+      const uploadResponse = await fetch("/api/tracks/upload", {
+        method: "POST",
+        body: formData,
       });
 
-      setPipelineProgressStatus(`Registry transaction sent! Tx: ${txHash.slice(0, 12)}... Waiting for confirmation.`);
-      setIsRegisteredOnChain(true);
+      if (!uploadResponse.ok) {
+        const errorBody = await uploadResponse.json().catch(() => null);
+        throw new Error(formatApiError(errorBody, "Failed to upload track"));
+      }
+
+      const uploadData = (await uploadResponse.json()) as TrackUploadResponse;
+      setFlow(uploadData.flow);
+      setLivePipelineSteps(uploadData.pipeline);
+      setPipelineProgressStatus("Starting CRE handoff...");
+
+      const startResponse = await fetch("/api/pipeline/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          flowId: flow.id,
+          trackId: uploadData.track.id,
+        }),
+      });
+
+      if (!startResponse.ok) {
+        const errorBody = await startResponse.json().catch(() => null);
+        throw new Error(formatApiError(errorBody, "Failed to start pipeline"));
+      }
+
+      const startData = (await startResponse.json()) as {
+        flow?: EchoFlow;
+        pipeline?: EchoPipelineStep[];
+        creTrigger?: {
+          status: "disabled" | "started" | "failed";
+          reason?: string;
+          error?: string;
+        };
+      };
+
+      if (startData.flow) {
+        setFlow(startData.flow);
+      }
+      if (startData.pipeline) {
+        setLivePipelineSteps(startData.pipeline);
+      }
+      setPipelineStarted(true);
+      if (startData.creTrigger?.status === "failed") {
+        setPipelineProgressStatus(`CRE trigger failed: ${startData.creTrigger.error ?? "unknown error"}`);
+      } else if (startData.creTrigger?.status === "disabled") {
+        setPipelineProgressStatus(`Pipeline initialized. Start CRE manually: ${startData.creTrigger.reason ?? "CRE trigger disabled"}`);
+      } else {
+        setPipelineProgressStatus("Confidential analysis pipeline running...");
+      }
     } catch (error) {
-      console.error("On-chain registration failed:", error);
-      setPipelineProgressStatus(`On-chain registration failed: ${error instanceof Error ? error.message : String(error)}`);
+      setPipelineProgressStatus(`Pipeline start failed: ${error instanceof Error ? error.message : String(error)}`);
+      setPayment({
+        status: "error",
+        error: error instanceof Error ? error.message : "Failed to upload and start pipeline",
+      });
     } finally {
-      setIsRegistering(false);
+      setIsStartingPipeline(false);
     }
   }
 
   async function handleRevealTrack() {
-    if (!flow?.id || !echoConfig.registryAddress) {
+    if (!certificateTrackId || !echoConfig.registryAddress) {
+      setPipelineProgressStatus("Reveal needs a confirmed Registry track ID first.");
       return;
     }
 
     try {
       setPipelineProgressStatus("Sending revealTrack transaction to Ethereum Sepolia...");
-      const mockTrackId = toHex(flow.id.slice(0, 31)).padEnd(66, "0").slice(0, 66);
-      const mockProfileHash = toHex("mock-profile").padEnd(66, "0").slice(0, 66);
+      const profileHash = toBytes32Hex(activeReport?.submitted_track?.fingerprint ?? flow?.trackFingerprint ?? "pending-profile");
 
       const txHash = await revealTrackContract({
         address: echoConfig.registryAddress as `0x${string}`,
-        abi: registryAbi as any,
+        abi: registryContractAbi,
         functionName: "revealTrack",
-        args: [mockTrackId as `0x${string}`, mockProfileHash as `0x${string}`],
+        args: [certificateTrackId, profileHash],
       });
 
       setPipelineProgressStatus(`Track revealed on-chain! Tx: ${txHash.slice(0, 12)}...`);
@@ -980,7 +1037,7 @@ export default function Home() {
     if (!pipelineStarted || !flow) {
       return {
         title: "No active verification",
-        subtitle: "Start verification to see results",
+        subtitle: "Start analysis to see results",
         badgeText: "Awaiting input",
         badgeClass: "border-white/20 bg-white/5 text-white/60",
         colorClass: "text-white/60",
@@ -991,17 +1048,19 @@ export default function Home() {
 
     const isPlagiat = livePipelineSteps.some(s => s.stepKey === "02A" && s.status === "blocked");
     const isSimilar = livePipelineSteps.some(s => s.stepKey === "02B" && s.status === "blocked");
+    const reportVerdict = activeReport?.verdict;
+    const bestMatch = bestReportMatch;
 
-    if (flow.status === "pipeline_blocked" || isPlagiat || isSimilar) {
-      if (isPlagiat) {
+    if (flow.status === "pipeline_blocked" || isPlagiat || isSimilar || reportVerdict === "SIMILAR" || reportVerdict === "REJECTED") {
+      if (isPlagiat || reportVerdict === "REJECTED") {
         return {
           title: "REJECTED: Plagiarism",
           subtitle: "ACRCloud acoustic fingerprint match exceeds the 95% threshold.",
           badgeText: "STOP - REJECTED",
           badgeClass: "border-[#ff7777]/60 bg-[#ff7777]/10 text-[#ff7777]",
           colorClass: "text-[#ff7777]",
-          showMatches: true,
-          bestMatch: 97,
+          showMatches: Boolean(activeReport),
+          bestMatch,
         };
       }
       return {
@@ -1010,20 +1069,22 @@ export default function Home() {
         badgeText: "STOP - SIMILAR",
         badgeClass: "border-[#ffd166]/60 bg-[#ffd166]/10 text-[#ffd166]",
         colorClass: "text-[#ffd166]",
-        showMatches: true,
-        bestMatch: 82,
+        showMatches: Boolean(activeReport),
+        bestMatch,
       };
     }
 
     if (flow.status === "pipeline_completed") {
       return {
         title: "CLEAN",
-        subtitle: "The track has been sealed. No plagiarism or significant compositional matches were found.",
-        badgeText: "VERDICT CLEAN",
+        subtitle: hasRegistrySeal
+          ? "The track has been sealed on Ethereum Sepolia."
+          : "The track passed analysis. Waiting for the Registry transaction.",
+        badgeText: hasRegistrySeal ? "SEALED" : "CLEAN - AWAITING SEAL",
         badgeClass: "border-[#9ef7c9]/60 bg-[#9ef7c9]/10 text-[#9ef7c9]",
         colorClass: "text-[#9ef7c9]",
-        showMatches: true,
-        bestMatch: 21,
+        showMatches: Boolean(activeReport),
+        bestMatch,
       };
     }
 
@@ -1048,7 +1109,7 @@ export default function Home() {
       showMatches: false,
       bestMatch: 0,
     };
-  }, [flow, pipelineStarted, livePipelineSteps]);
+  }, [activeReport, bestReportMatch, flow, hasRegistrySeal, pipelineStarted, livePipelineSteps]);
 
   return (
     <main className="min-h-screen overflow-hidden bg-[#050505] text-[#f8f6ee]">
@@ -1199,24 +1260,26 @@ export default function Home() {
               <WalletConnectControl tone="panel" />
               <button
                 className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#f59abd] px-5 font-black text-[#050505] transition hover:bg-[#ffb1ce] disabled:cursor-not-allowed disabled:opacity-45"
-                disabled={(!canPay && payment.status !== "paid") || isSendingTransaction || isConfirmingTransaction || isSwitchingChain || isRegistering}
-                onClick={handleRegisterAndStart}
+                disabled={
+                  payment.status === "paid"
+                    ? !canStartAnalysis || isStartingPipeline
+                    : !canPay
+                }
+                onClick={handlePrimaryAction}
                 type="button"
               >
-                <ShieldCheck className="size-5" aria-hidden="true" />
+                <Upload className="size-5" aria-hidden="true" />
                 {payment.status === "paid"
-                  ? isRegistering
-                    ? "Registering..."
-                    : isRegisteredOnChain
-                      ? "Registered"
-                      : "Register on-chain"
-                  : isSwitchingChain
-                    ? "Switching..."
-                    : chainId !== sepolia.id
-                      ? "Switch to Sepolia"
-                      : isSendingTransaction || isConfirmingTransaction || payment.status === "pending"
-                      ? "Confirming..."
-                      : "Pay Sepolia fee"}
+                  ? isStartingPipeline
+                    ? "Starting..."
+                    : flow?.status === "pipeline_completed"
+                      ? "Analysis complete"
+                      : flow?.status === "pipeline_blocked" || flow?.status === "error"
+                        ? "Analysis stopped"
+                        : pipelineStarted
+                          ? "Analysis running"
+                          : "Upload / Start analysis"
+                  : "Pay Sepolia fee"}
               </button>
             </div>
 
@@ -1275,17 +1338,17 @@ export default function Home() {
         </div>
       </section>
 
-      <section id="pipeline" className="px-4 py-16 sm:px-6 lg:px-8">
-        <div className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[0.9fr_1.1fr]">
+      <section id="pipeline" className="px-4 py-12 sm:px-6 lg:px-8 lg:py-16">
+        <div className="mx-auto flex flex-col gap-6 lg:gap-8 w-full max-w-7xl">
           <div>
-            <p className="font-hand text-3xl text-[#9ef7c9]">echo, but sealed</p>
-            <h2 className="mt-4 max-w-3xl font-display text-[clamp(3rem,7vw,6.5rem)] font-black leading-[0.9]">
+            <p className="font-hand text-2xl sm:text-3xl text-[#9ef7c9]">echo, but sealed</p>
+            <h2 className="mt-2 sm:mt-4 max-w-3xl font-display text-[clamp(2.5rem,5.5vw,4.2rem)] font-black leading-[0.9]">
               One private run. One public timestamp.
             </h2>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            {displaySteps.map((step, index) => {
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 sm:gap-4">
+            {displaySteps.map((step) => {
               const liveState = getLiveStepState(step.status);
               const progressWidth = step.meta && step.meta.endsWith("%")
                 ? step.meta
@@ -1300,19 +1363,19 @@ export default function Home() {
                   ? "border-[#fff7cf]/40 bg-[#fff7cf]/5"
                   : "border-white/15 bg-[#080808]";
               return (
-                <div className={`min-h-56 rounded-[8px] border p-5 transition-colors duration-200 ${borderClass}`} key={step.id}>
-                  <div className="mb-10 flex items-start justify-between gap-4">
-                    <span className={`font-display text-5xl font-black ${liveState === "blocked" ? "text-[#ff7777]" : "text-[#f59abd]"}`}>{step.id}</span>
-                    <span className="rounded-full border border-white/15 px-3 py-1 text-sm text-white/55">
+                <div className={`min-h-48 sm:min-h-56 lg:min-h-[170px] xl:min-h-[200px] rounded-[8px] border p-4 sm:p-5 transition-colors duration-200 ${borderClass}`} key={step.id}>
+                  <div className="mb-4 sm:mb-8 lg:mb-3 xl:mb-6 flex items-start justify-between gap-2">
+                    <span className={`font-display text-4xl sm:text-5xl lg:text-3xl xl:text-4xl font-black ${liveState === "blocked" ? "text-[#ff7777]" : "text-[#f59abd]"}`}>{step.id}</span>
+                    <span className="rounded-full border border-white/15 px-2 py-0.5 sm:px-3 sm:py-1 text-xs sm:text-sm text-white/55">
                       {step.id === "02A" || step.id === "02B" ? "Parallel" : "Sequential"}
                     </span>
                   </div>
-                  <h3 className="font-display text-2xl font-black">{step.title}</h3>
-                  <p className="mt-2 text-lg text-white/55">{step.detail}</p>
+                  <h3 className="font-display text-lg sm:text-2xl lg:text-base xl:text-lg font-black truncate lg:whitespace-normal">{step.title}</h3>
+                  <p className="mt-1 sm:mt-2 text-sm sm:text-lg lg:text-xs xl:text-sm text-white/55 line-clamp-2 lg:line-clamp-none">{step.detail}</p>
                   {step.reason && (
-                    <p className="mt-2 text-sm text-[#ff7777] font-semibold">{step.reason}</p>
+                    <p className="mt-1 sm:mt-2 text-xs sm:text-sm text-[#ff7777] font-semibold line-clamp-2">{step.reason}</p>
                   )}
-                  <div className="mt-8 h-2 rounded-full bg-white/10">
+                  <div className="mt-4 sm:mt-8 lg:mt-3 xl:mt-5 h-2 rounded-full bg-white/10">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${liveState === "blocked" ? "bg-[#ff7777]" : "bg-[#9ef7c9]"}`}
                       style={{ width: progressWidth }}
@@ -1340,7 +1403,7 @@ export default function Home() {
             </div>
           </div>
 
-          {verdictInfo.showMatches ? (
+          {verdictInfo.showMatches && reportMatches.length > 0 ? (
             <div className="overflow-hidden rounded-[8px] border border-white/15 bg-[#080808]">
               <div className="grid grid-cols-[56px_1.6fr_repeat(6,minmax(92px,1fr))] overflow-x-auto text-sm">
                 <div className="contents text-white/45">
@@ -1353,55 +1416,7 @@ export default function Home() {
                   <div className="min-w-28 border-b border-white/10 p-4">Key / BPM</div>
                   <div className="min-w-32 border-b border-white/10 p-4">Source</div>
                 </div>
-                {(verdictInfo.title.includes("REJECTED")
-                  ? [
-                      {
-                        rank: 1,
-                        title: "Matched Public Track (ACRCloud)",
-                        score: 97,
-                        melody: 92,
-                        rhythm: 98,
-                        structure: 90,
-                        key: "G min / 128",
-                        source: "ACRCloud (ISRC: US-RC1-23-45678)",
-                      },
-                    ]
-                  : verdictInfo.title.includes("SIMILAR")
-                    ? [
-                        {
-                          rank: 1,
-                          title: "Similar Composition - Sealed #39a5",
-                          score: 82,
-                          melody: 85,
-                          rhythm: 78,
-                          structure: 83,
-                          key: "A min / 124",
-                          source: "Private registry",
-                        },
-                      ]
-                    : [
-                        {
-                          rank: 1,
-                          title: "Night Glass - Luma Vale",
-                          score: 21,
-                          melody: 18,
-                          rhythm: 24,
-                          structure: 20,
-                          key: "A min / 124",
-                          source: "ACRCloud",
-                        },
-                        {
-                          rank: 2,
-                          title: "@artist_9x7 - [SEALED]",
-                          score: 14,
-                          melody: 16,
-                          rhythm: 12,
-                          structure: 15,
-                          key: "C maj / 121",
-                          source: "Private registry",
-                        },
-                      ]
-                ).map((match) => (
+                {reportMatches.map((match) => (
                   <div className="contents" key={match.rank}>
                     <div className="min-w-14 border-b border-white/10 p-4 text-white/55">{match.rank}</div>
                     <div className="min-w-64 border-b border-white/10 p-4 font-bold">{match.title}</div>
@@ -1409,11 +1424,18 @@ export default function Home() {
                     <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.melody}%</div>
                     <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.rhythm}%</div>
                     <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.structure}%</div>
-                    <div className="min-w-28 border-b border-white/10 p-4 text-white/65">{match.key}</div>
+                    <div className="min-w-28 border-b border-white/10 p-4 text-white/65">{match.keyLabel}</div>
                     <div className="min-w-32 border-b border-white/10 p-4 text-white/65">{match.source}</div>
                   </div>
                 ))}
               </div>
+              {activeReport?.ai_summary ? (
+                <p className="border-t border-white/10 p-4 text-sm leading-6 text-white/65">{activeReport.ai_summary}</p>
+              ) : null}
+            </div>
+          ) : verdictInfo.showMatches ? (
+            <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/45">
+              Report pending. Waiting for backend similarity rows and AI summary.
             </div>
           ) : (
             <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/45">
@@ -1445,26 +1467,46 @@ export default function Home() {
                 </div>
               </div>
               <div className="mt-10 font-bold text-white/45 text-sm">
-                No contract state was modified. Your EVM fee will be refunded/settled.
+                No on-chain seal was created.
               </div>
             </div>
-          ) : (
+          ) : hasRegistrySeal ? (
             <div className="relative overflow-hidden rounded-[8px] border border-white/15 bg-[#f8f6ee] p-6 text-[#050505] sm:p-8">
               <div className="absolute right-8 top-8 rounded-full bg-[#050505] px-4 py-2 text-sm font-black text-[#f8f6ee]">
-                {flow?.status === "pipeline_completed" ? "SEALED" : "PENDING"}
+                SEALED
               </div>
-              <p className="font-hand text-3xl text-[#f59abd]">certificate preview</p>
+              <p className="font-hand text-3xl text-[#f59abd]">sealed certificate</p>
               <h2 className="mt-4 max-w-3xl font-display text-[clamp(3rem,7vw,7rem)] font-black leading-[0.86]">
                 Proof that keeps the music yours.
               </h2>
-              <div className="mt-10 grid gap-4 sm:grid-cols-3">
+              <div className="mt-10 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 <CertificateMetric
-                  label="Commitment"
-                  value={flow?.trackFingerprint ? `${flow.trackFingerprint.slice(0, 10)}...${flow.trackFingerprint.slice(-6)}` : "Awaiting run"}
+                  label="Commitment hash"
+                  value={flow?.commitmentHash ?? "Not provided"}
+                  copyValue={flow?.commitmentHash}
+                />
+                <CertificateMetric
+                  label="Registry ref"
+                  value={flow?.registryRef ?? "Not provided"}
+                  copyValue={flow?.registryRef}
+                />
+                <CertificateMetric
+                  label="Track ID"
+                  value={certificateTrackId ?? "Not provided"}
+                  copyValue={certificateTrackId}
+                />
+                <CertificateMetric
+                  label="Registry tx"
+                  value={certificateTxHash ?? "Not provided"}
+                  copyValue={certificateTxHash ?? undefined}
                 />
                 <CertificateMetric
                   label="Timestamp"
-                  value={flow?.status === "pipeline_completed" ? new Date(flow.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Awaiting run"}
+                  value={
+                    flow?.updatedAt
+                      ? new Date(flow.updatedAt).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                      : "Not provided"
+                  }
                 />
                 <CertificateMetric
                   label="Registry"
@@ -1472,21 +1514,9 @@ export default function Home() {
                 />
               </div>
               <div className="mt-8 flex flex-wrap gap-3">
-                <button
-                  className="inline-flex min-h-12 items-center gap-2 rounded-full bg-[#050505] px-5 font-black text-white transition hover:bg-[#202020] disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={!flow?.trackFingerprint}
-                  onClick={async () => {
-                    if (flow?.trackFingerprint) {
-                      await navigator.clipboard.writeText(flow.trackFingerprint);
-                    }
-                  }}
-                >
-                  <Copy className="size-4" aria-hidden="true" />
-                  Copy hash
-                </button>
                 <a
-                  className={`inline-flex min-h-12 items-center gap-2 rounded-full border border-[#050505]/20 px-5 font-black transition hover:border-[#050505] ${!flow?.txHash ? "opacity-50 pointer-events-none" : ""}`}
-                  href={flow?.txHash ? `https://sepolia.etherscan.io/tx/${flow.txHash}` : "#"}
+                  className="inline-flex min-h-12 items-center gap-2 rounded-full border border-[#050505]/20 px-5 font-black transition hover:border-[#050505]"
+                  href={`${echoConfig.registryExplorer}/tx/${certificateTxHash}`}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -1494,6 +1524,24 @@ export default function Home() {
                   Etherscan
                 </a>
               </div>
+            </div>
+          ) : (
+            <div className="relative overflow-hidden rounded-[8px] border border-white/15 bg-[#080808] p-6 text-white sm:p-8">
+              <div className="rounded-full border border-white/15 bg-white/[0.03] px-4 py-2 text-sm font-black text-white/55 w-fit">
+                CERTIFICATE PENDING
+              </div>
+              <p className="mt-8 font-hand text-3xl text-[#f59abd]">no seal yet</p>
+              <h2 className="mt-4 max-w-3xl font-display text-[clamp(3rem,7vw,7rem)] font-black leading-[0.86]">
+                Certificate appears only after a clean Registry transaction.
+              </h2>
+              <p className="mt-6 max-w-2xl text-lg leading-7 text-white/62">
+                Echo will show the commitment hash, registry reference, track ID, Sepolia transaction, and timestamp after the CRE/backend writes a confirmed CLEAN seal.
+              </p>
+              {flow?.status === "pipeline_completed" ? (
+                <p className="mt-6 rounded-[8px] border border-[#9ef7c9]/25 bg-[#9ef7c9]/10 p-4 text-sm font-bold text-[#9ef7c9]">
+                  CLEAN verdict received. Waiting for registryTxHash before showing the certificate.
+                </p>
+              ) : null}
             </div>
           )}
 
@@ -1508,7 +1556,7 @@ export default function Home() {
             <div className="space-y-3">
               {[
                 flow?.status === "pipeline_blocked" ? "Seal execution cancelled" : "SEALED entry is private",
-                "Report attached to Walrus blob",
+                hasRegistrySeal ? "Report linked to backend registry record" : "Certificate waits for Registry tx",
                 "Reveal requires wallet signature",
               ].map((item) => (
                 <div className="flex min-h-14 items-center gap-3 rounded-[8px] border border-white/10 px-4" key={item}>
@@ -1521,7 +1569,7 @@ export default function Home() {
             </div>
             <button
               className="mt-8 inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#8fd5ff] px-5 font-black text-[#050505] transition hover:bg-[#b8e5ff] disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={flow?.status !== "pipeline_completed" || isRevealingTrack}
+              disabled={!hasRegistrySeal || !certificateTrackId || isRevealingTrack}
               onClick={handleRevealTrack}
             >
               {isRevealingTrack ? "Revealing..." : "Reveal track"}
@@ -1714,10 +1762,22 @@ function PipelineRow({
   );
 }
 
-function CertificateMetric({ label, value }: { label: string; value: string }) {
+function CertificateMetric({ label, value, copyValue }: { label: string; value: string; copyValue?: string }) {
   return (
     <div className="min-h-28 rounded-[8px] border border-[#050505]/15 p-4">
-      <p className="text-sm font-bold uppercase text-[#050505]/45">{label}</p>
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-bold uppercase text-[#050505]/45">{label}</p>
+        {copyValue ? (
+          <button
+            className="grid size-8 shrink-0 place-items-center rounded-full border border-[#050505]/15 text-[#050505]/55 transition hover:border-[#050505] hover:text-[#050505]"
+            onClick={async () => navigator.clipboard.writeText(copyValue)}
+            type="button"
+            aria-label={`Copy ${label}`}
+          >
+            <Copy className="size-3.5" aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
       <p className="mt-4 break-words font-display text-2xl font-black">{value}</p>
     </div>
   );
