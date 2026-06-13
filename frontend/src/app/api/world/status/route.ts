@@ -14,7 +14,8 @@ export const runtime = "nodejs";
 
 export async function GET(): Promise<Response> {
   const feeReceiver = process.env.NEXT_PUBLIC_FEE_RECEIVER_ADDRESS ?? process.env.PAYMENT_RECEIVER_ADDRESS;
-  const missing = [...REQUIRED.filter((name) => !process.env[name]), ...(feeReceiver ? [] : ["NEXT_PUBLIC_FEE_RECEIVER_ADDRESS"])];
+  const missingUploadStorage = process.env.VERCEL && !process.env.BLOB_READ_WRITE_TOKEN ? ["BLOB_READ_WRITE_TOKEN"] : [];
+  const missing = [...REQUIRED.filter((name) => !process.env[name]), ...(feeReceiver ? [] : ["NEXT_PUBLIC_FEE_RECEIVER_ADDRESS"]), ...missingUploadStorage];
   const persistenceMode = getPersistenceMode();
   const persistence = await getPersistenceHealth();
   const missingOptional = OPTIONAL.filter((name) => !process.env[name]);
