@@ -11,6 +11,7 @@ import {
   getHeader,
   hexToBase64,
   prepareReportRequest,
+  Report,
   type Runtime,
 } from "@chainlink/cre-sdk";
 import type { CONFIDENTIAL_HTTP_CLIENT_PB } from "@chainlink/cre-sdk/pb";
@@ -84,15 +85,17 @@ export function encodeCallbackReportPayload(
 /**
  * Builds a DON-signed CRE report (hex rawReport) bundling verdict,
  * commitmentHash, and all agent attestations for receiveCRECallback().
+ * Returns both the hex attestation string and the Report object
+ * (needed by EVMClient.writeReport for on-chain dispatch).
  */
 export function buildOnChainAttestation(
   runtime: Runtime<unknown>,
   result: PipelineResult,
   agentAttestations: readonly AgentAttestation[],
-): string {
+): { attestation: string; report: Report } {
   const encodedPayload = encodeCallbackReportPayload(result, agentAttestations);
   const report = runtime.report(prepareReportRequest(encodedPayload)).result();
-  return bytesToHex(report.rawReport());
+  return { attestation: bytesToHex(report.rawReport()), report };
 }
 
 /** Validates that every collected agent attestation is non-empty. */

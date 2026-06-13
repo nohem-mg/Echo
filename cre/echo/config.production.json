@@ -1,5 +1,6 @@
 {
   "backendBaseUrl": "https://echo-backend.example.com",
   "useConfidentialHttp": true,
-  "secretsOwner": ""
+  "secretsOwner": "",
+  "registryAddress": "0x0000000000000000000000000000000000000000"
 }
