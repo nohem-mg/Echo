@@ -2,7 +2,7 @@
 
 **ETH Global New York 2026 | Chainlink CRE v1.19.0+**
 
-4-step fail-fast DAG: BasicPitch → ACRCloud ∥ MIDI private → MIDI commercial → Final Report → on-chain callback.
+4-step fail-fast DAG: BasicPitch → ACRCloud ∥ MIDI private → MIDI commercial → Final Report → on-chain callback for CLEAN only.
 
 ---
 
@@ -62,7 +62,7 @@ curl -X POST http://localhost:2000/trigger \
   -d @cre/echo/sample-submission.json
 ```
 
-### Mode B — `--listen --broadcast` (writes verdict on-chain to Sepolia)
+### Mode B — `--listen --broadcast` (writes CLEAN verdict on-chain to Sepolia)
 
 ```bash
 /Users/nohemmg/.cre/bin/cre workflow simulate ./cre/echo \
@@ -73,7 +73,7 @@ curl -X POST http://localhost:2000/trigger \
   -R ./cre
 ```
 
-Then trigger with the same `curl` above. The verdict will be dispatched to the Registry contract on Sepolia via `EVMClient.writeReport()`.
+Then trigger with the same `curl` above. A CLEAN verdict is dispatched to the Registry contract on Sepolia via `EVMClient.writeReport()`. SIMILAR, REJECTED, and ERROR never write on-chain.
 
 ### Mode C — `--http-payload` (inline payload, one-shot)
 
@@ -127,8 +127,12 @@ Step 3 — MIDI comparison vs N commercial track(s)
 Step 4 — acoustic extraction (raw audio) + final report
 Final verdict: CLEAN
 CRE attestation ready for callback (0x...)
-CRE → Registry.onReport dispatched (gas 500000, 0xf011Bb61…)   # only with --broadcast
+CRE → Registry.onReport dispatched (gas 500000, 0xf011Bb61…)   # only CLEAN with --broadcast
 ```
+
+If `pipelineEventsUrl` and `pipelineEventsSecret` are configured, CRE also sends best-effort UI updates to `/api/pipeline/events` after each step and at terminal completion. The secret must match frontend `ECHO_PIPELINE_SECRET`; keep real values out of committed config files.
+
+For local frontend-driven runs, set frontend `CRE_TRIGGER_URL=http://localhost:2000/trigger`. That URL is the CRE simulator trigger, not the deployed frontend URL. If the frontend runs on Vercel, it cannot call a simulator on your laptop unless you expose the simulator through a tunnel.
 
 ---
 
@@ -161,3 +165,4 @@ Tests cover: fail-fast logic (2A/2B thresholds), HTTP error halting, Step 3 cond
 - Key / BPM extracted from raw audio only, never from MIDI
 - BasicPitch converts; MIDI Comparison Algo compares (two separate steps)
 - Fail-fast thresholds: 2A ≥95% → REJECTED · 2B ≥75% → SIMILAR
+- No Registry write on SIMILAR, REJECTED, or ERROR

@@ -1,5 +1,5 @@
 // ==========================================================================
-// Echo — Registry callback payload (Cyriac receiveCRECallback)
+// Echo — Registry callback payload (Cyriac Registry.onReport)
 // --------------------------------------------------------------------------
 // Section 5 will wire EVMClient.writeReport() once the Registry address is
 // available. Section 4 prepares the attestation-bearing payload now.
@@ -8,8 +8,8 @@
 import type { PipelineResult, Verdict } from "./types";
 
 /**
- * Payload dispatched to Registry.receiveCRECallback(trackId, Status, rawReport).
- * Built for all non-ERROR verdicts once the DON-signed report is ready.
+ * Payload dispatched to Registry for a CLEAN seal.
+ * SIMILAR, REJECTED, and ERROR never produce an on-chain callback.
  */
 export type RegistryCallbackPayload = {
   trackId: string;
@@ -18,11 +18,11 @@ export type RegistryCallbackPayload = {
   attestation: string;
 };
 
-/** Builds the callback payload for all non-ERROR verdicts. Returns undefined on ERROR. */
+/** Builds the callback payload for CLEAN only. */
 export function buildRegistryCallback(
   result: PipelineResult,
 ): RegistryCallbackPayload | undefined {
-  if (result.verdict === "ERROR" || !result.attestation) {
+  if (result.verdict !== "CLEAN" || !result.attestation) {
     return undefined;
   }
   return {
