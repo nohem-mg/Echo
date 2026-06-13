@@ -2,5 +2,6 @@
   "backendBaseUrl": "https://echo-backend.example.com",
   "useConfidentialHttp": true,
   "secretsOwner": "",
-  "registryAddress": "0x52eE9af7918c69Ab4DC08b9C0b2a82C24Fd6DC6C"
+  "registryAddress": "0x52eE9af7918c69Ab4DC08b9C0b2a82C24Fd6DC6C",
+  "writeReportGasLimit": "500000"
 }

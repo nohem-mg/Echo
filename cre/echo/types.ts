@@ -10,7 +10,7 @@ export type Verdict = "CLEAN" | "SIMILAR" | "REJECTED" | "ERROR";
 // Pipeline input (HTTP trigger payload)
 // --------------------------------------------------------------------------
 export type PipelineInput = {
-  // Raw audio reference (encrypted Walrus blob or signed backend URL).
+  // Raw audio reference (signed backend URL or opaque storage ref).
   audioRef: string;
   // keccak256(fingerprint + JSON profile) — sealed on-chain at registration.
   commitmentHash: string;
@@ -41,7 +41,7 @@ export type CheckPublicResponse = {
 };
 
 // --------------------------------------------------------------------------
-// Step 2B — POST /api/compare/private  (MIDI algo vs private Walrus registry)
+// Step 2B — POST /api/compare/private  (MIDI algo vs private PostgreSQL registry)
 // --------------------------------------------------------------------------
 export type RegistryMatch = {
   track_id: string;
