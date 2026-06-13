@@ -1,0 +1,44 @@
+[project]
+name = "echo-basic-pitch-service"
+version = "0.1.0"
+description = "Echo — Step 1 du pipeline : conversion audio brut -> MIDI via Spotify BasicPitch."
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "python-multipart>=0.0.9",
+    # BasicPitch + son runtime. La version exacte du backend ML (tf/coreml/tflite/onnx)
+    # est résolue par la plateforme ; voir README pour le choix par OS.
+    "basic-pitch>=0.4.0",
+    # basic-pitch épingle resampy<0.4.3, qui importe encore pkg_resources ;
+    # setuptools>=81 l'a retiré. À conserver tant que resampy n'est pas relâché.
+    "setuptools<81",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+# Third-party deprecation noise (starlette/httpx, resampy, audioread). Targeted on
+# purpose so our own code's warnings still surface.
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient`",
+    "ignore:pkg_resources is deprecated:UserWarning",
+    "ignore:'aifc' is deprecated:DeprecationWarning",
+    "ignore:'audioop' is deprecated:DeprecationWarning",
+    "ignore:'sunau' is deprecated:DeprecationWarning",
+]
