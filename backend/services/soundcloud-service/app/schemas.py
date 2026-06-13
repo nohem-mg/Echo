@@ -27,6 +27,7 @@ class UploadMetadata(BaseModel):
     # in production, store the token server-side after the OAuth callback
     # and reference it by session ID instead of passing it in the request body.
     access_token: str = Field(..., min_length=1)
+    refresh_token: str = Field(default="", description="Refresh token for automatic renewal")
 
 
 class UploadResponse(BaseModel):

@@ -29,18 +29,38 @@ class SoundCloudService:
     def __init__(self, settings: Settings) -> None:
         self._s = settings
 
+    async def refresh_token(self, refresh_token: str) -> dict:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                "https://secure.soundcloud.com/oauth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "client_id": self._s.client_id,
+                    "client_secret": self._s.client_secret,
+                    "refresh_token": refresh_token,
+                }
+            )
+            r.raise_for_status()
+            return r.json()
+
     async def upload(
         self, audio_path: Path, metadata: UploadMetadata
     ) -> UploadResponse:
         """Upload an audio file to SoundCloud and return the track permalink."""
-        payload = await self._upload_to_api(audio_path, metadata)
+        try:
+            payload = await self._upload_to_api(audio_path, metadata)
+        except UpstreamError as e:
+            if getattr(e, "code", None) == "unauthorized" and metadata.refresh_token:
+                logger.info("SoundCloud token expired, refreshing...")
+                new_tokens = await self.refresh_token(metadata.refresh_token)
+                metadata.access_token = new_tokens["access_token"]
+                payload = await self._upload_to_api(audio_path, metadata)
+            else:
+                raise
         logger.info("SoundCloud API payload", extra={"context": {"payload": payload}})
         
-        # SoundCloud may omit the raw 'permalink' key on private creations
-        # Fall back to extracting it from the permalink_url.
-        # Format can be: https://soundcloud.com/artist/track-name/s-token?...
-        # If it's a private track, there might be a secret token. We just extract the last path segment (or second to last if there's a token? Actually, split("/")[-1] on the base URL, but wait, the permalink_url has query params and maybe a secret token path.)
-        # Let's strip query parameters from permalink_url before splitting
+        # SoundCloud may omit the raw 'permalink' key on private creations.
+        # Fall back to extracting it from the permalink_url slug, ignoring query parameters.
         import urllib.parse
         parsed_url = urllib.parse.urlparse(payload.get("permalink_url", ""))
         permalink = payload.get("permalink") or parsed_url.path.rstrip("/").split("/")[-1]

@@ -115,3 +115,70 @@ def test_upload_upstream_error(client, patch_upload_error):
     )
     assert r.status_code == 502
     assert r.json()["code"] == "upstream_error"
+
+
+def test_upload_auto_refresh(client, monkeypatch):
+    """401 on first call → refresh → retry succeeds."""
+    call_count = 0
+
+    async def upload_side_effect(self, audio_path, req):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            from echo_common.errors import UpstreamError
+            raise UpstreamError("SoundCloud access_token is invalid or expired.", code="unauthorized")
+        return {
+            "soundcloud_url": "https://soundcloud.com/artist/track",
+            "track_id": 123,
+            "permalink": "track",
+        }
+
+    async def mock_refresh(self, refresh_token):
+        return {"access_token": "new_token", "refresh_token": "new_refresh"}
+
+    monkeypatch.setattr(
+        "app.service.SoundCloudService._upload_to_api", upload_side_effect
+    )
+    monkeypatch.setattr(
+        "app.service.SoundCloudService.refresh_token", mock_refresh
+    )
+
+    audio = b"fake-audio"
+    metadata = json.dumps({
+        "title": "Test",
+        "access_token": "expired_token",
+        "refresh_token": "valid_refresh",
+    })
+    r = client.post(
+        "/api/soundcloud/upload",
+        files={"file": ("test.mp3", audio, "audio/mpeg")},
+        data={"metadata": metadata},
+    )
+    assert r.status_code == 200
+    assert call_count == 2
+
+
+def test_upload_refresh_missing_token(client, monkeypatch):
+    """401 without refresh_token → error propagates."""
+    from echo_common.errors import UpstreamError
+
+    async def always_401(self, audio_path, req):
+        raise UpstreamError("SoundCloud access_token is invalid or expired.", code="unauthorized")
+
+    monkeypatch.setattr(
+        "app.service.SoundCloudService._upload_to_api", always_401
+    )
+
+    audio = b"fake-audio"
+    metadata = json.dumps({
+        "title": "Test",
+        "access_token": "expired_token",
+        # no refresh_token
+    })
+    r = client.post(
+        "/api/soundcloud/upload",
+        files={"file": ("test.mp3", audio, "audio/mpeg")},
+        data={"metadata": metadata},
+    )
+    assert r.status_code == 502
+
