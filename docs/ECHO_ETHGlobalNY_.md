@@ -16,8 +16,8 @@ The Echo Protocol is an on-chain music prior-art registry designed for independe
 
 **Core Idea:** With the rise of AI-generated music and landmark lawsuits (Suno, Udio), artists need a trustless, verifiable, and private way to state, "I created this first." The Echo Protocol makes this possible by combining multi-agent AI fingerprinting, Trusted Execution Environments (TEEs), and on-chain timestamping in a 5-phase parallelised agentic pipeline.
 
-| Problem | Solution | Target Audience | Prize Goal |
-| :--- | :--- | :--- | :--- |
+| Problem                                                                                        | Solution                                                                                                                                                                                                                  | Target Audience                                                                               | Prize Goal                                                      |
+| :-----------------------------------------------------------------------------------------------| :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------| :----------------------------------------------------------------------------------------------| :----------------------------------------------------------------|
 | No trustless, private, and verifiable way to claim musical prior-art before releasing a track. | A 5-phase parallelised agentic pipeline: parallel Shazam check + acoustic analysis, parallel private registry comparison + commercial comparison, final synthesis with a list of similar tracks, and on-chain commitment. | Indie artists, labels, music IP lawyers, and AI platforms requiring provable IP traceability. | $20,500 split across World, Chainlink, and Unlink prize tracks. |
 
 ## 2. Problem Statement
@@ -191,18 +191,18 @@ Chainlink Confidential AI provides hardware isolation (Intel TDX) for agents ope
 
 ## 5. Technical Stack
 
-| Layer | Technology | Role in The Echo Protocol |
-| :--- | :--- | :--- |
-| **Human Identity** | World ID + AgentKit | Proves each artist is a unique, verified human. AgentKit issues *Human-Backed Agent* credentials required to enter the pipeline and manage the free-trial system. |
-| **Orchestration** | Chainlink CRE | DAG 5-phase workflow engine. Manages parallelisation (A ∥ B and C ∥ D), inter-phase synchronisation, and the final on-chain verdict callback. |
-| **Confidential AI** | Chainlink Confidential AI | Executes agents A, B, C, and D inside TEE enclaves. Generates cryptographically verifiable on-chain attestations. |
-| **Commercial Detection** | ACRCloud | Agent A: Shazam-style commercial check in Phase 1. Acoustic fingerprint comparison against the global catalogue of released tracks. |
-| **MIDI Conversion** | BasicPitch (Spotify) | Agent B: audio → MIDI conversion + key, BPM, fingerprint, chord, and structural extraction. |
-| **Privacy Layer** | Unlink SDK | Routes all agent payments (x402) and SoundCloud transmission through private balances, preventing transaction graph analysis. |
-| **Storage** | PostgreSQL | Registry tracks database (service `registry-db` of docker-compose). Stores full MIDI and skyline interval profiles. Accessible only via the `midi-similarity-service` API. |
-| **Blockchain** | Ethereum Sepolia | Hosts the `Registry` smart contract. |
-| **Wallet / Auth** | MetaMask / World App (wagmi) | Transaction signing for artists. World App serves as the primary interface for World ID. |
-| **Payments** | x402 Protocol | Machine-to-machine HTTP micro-payments for the 5 agents and Clearance API queries. All x402 flows route through Unlink. |
+| Layer                    | Technology                   | Role in The Echo Protocol                                                                                                                                                  |
+| :-------------------------| :-----------------------------| :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Human Identity**       | World ID + AgentKit          | Proves each artist is a unique, verified human. AgentKit issues *Human-Backed Agent* credentials required to enter the pipeline and manage the free-trial system.          |
+| **Orchestration**        | Chainlink CRE                | DAG 5-phase workflow engine. Manages parallelisation (A ∥ B and C ∥ D), inter-phase synchronisation, and the final on-chain verdict callback.                              |
+| **Confidential AI**      | Chainlink Confidential AI    | Executes agents A, B, C, and D inside TEE enclaves. Generates cryptographically verifiable on-chain attestations.                                                          |
+| **Commercial Detection** | ACRCloud                     | Agent A: Shazam-style commercial check in Phase 1. Acoustic fingerprint comparison against the global catalogue of released tracks.                                        |
+| **MIDI Conversion**      | BasicPitch (Spotify)         | Agent B: audio → MIDI conversion + key, BPM, fingerprint, chord, and structural extraction.                                                                                |
+| **Privacy Layer**        | Unlink SDK                   | Routes all agent payments (x402) and SoundCloud transmission through private balances, preventing transaction graph analysis.                                              |
+| **Storage**              | PostgreSQL                   | Registry tracks database (service `registry-db` of docker-compose). Stores full MIDI and skyline interval profiles. Accessible only via the `midi-similarity-service` API. |
+| **Blockchain**           | Ethereum Sepolia             | Hosts the `Registry` smart contract.                                                                                                                                       |
+| **Wallet / Auth**        | MetaMask / World App (wagmi) | Transaction signing for artists. World App serves as the primary interface for World ID.                                                                                   |
+| **Payments**             | x402 Protocol                | Machine-to-machine HTTP micro-payments for the 5 agents and Clearance API queries. All x402 flows route through Unlink.                                                    |
 
 ### 5.1 PostgreSQL Storage Architecture
 
@@ -216,56 +216,10 @@ The private registry is stored in a PostgreSQL database (`registry-db`), replaci
 * **Confidentiality:** Audio files are never stored. Only irreversible compositional fingerprints serve for similarity scoring, with the MIDI sequences securely enclosed in the database.
 * **On-chain reference:** The smart contract stores only a `registryRef = keccak256(track_id)` as an opaque pointer to the database entry.
 
----
-
-## 6. Prize Strategy
-
-The Echo Protocol targets a total of **$20,500** across five prize tracks from three sponsors.
-
-### 6.1 World — Track A (AgentKit) | $7,500
-* **Prizes:** $3,500 (1st) / $2,500 (2nd) / $1,500 (3rd)
-* **Requirement:** Significant use of AgentKit + human-verified free-trial system + operational Human-Backed Agents.
-* **Our Implementation:** AgentKit issues *Human-Backed Agent* credentials in Phase 0. The five AI agents inherit this credential, ensuring only human-initiated registrations go through.
-* **Trial System:** The first 3 registrations per World ID are free. After the trial, x402 micro-payments are enabled.
-
-### 6.2 World — Track B (World ID) | $2,500
-* **Prizes:** $1,500 (1st) / $1,000 (2nd)
-* **Requirement:** The product must not function without World ID + on-chain verified proof.
-* **Why We Qualify:** Without World ID, scripts could spam the registry with thousands of fake claims. World ID imposes one-human-one-registration. Verified on-chain via the World Router contract on Base Sepolia.
-
-### 6.3 Chainlink — Best CRE Workflow | $6,000
-* **Prizes:** Up to 3 teams x $2,000
-* **Requirement:** CRE workflow as orchestration layer + >= 1 blockchain + API/LLM/agent + successful simulation.
-* **Our Implementation:** The CRE is the central orchestrator of the 5-phase DAG. It manages A ∥ B parallelization (Phase 1), inter-phase synchronization, C ∥ D parallelization (Phase 2), and the final on-chain write. Blockchain + 5 API/AI agent calls in a single workflow. Simulation via CRE CLI + live deployment requested from the Chainlink team during the hackathon.
-
-### 6.4 Chainlink — Confidential AI Attester | $4,000
-* **Prizes:** Up to 2 teams x $2,000
-* **Requirement:** Use Chainlink Confidential AI APIs, submit >= 1 confidential request, handle sensitive inputs.
-* **Our Implementation:** Four agents (A, B, C, D) submit confidential inference requests. Sensitive inputs include: MIDI of unreleased tracks, full profile, private registry comparison, and commercial comparison. Attestations are verified by the Registry contract.
-
-### 6.5 Unlink — Best Integration in an OSS App | $2,500
-* **Prizes:** $2,500
-* **Requirement:** Integrate `@unlink-xyz/sdk` in a real open-source app, route existing flows via Unlink, functional demo + public repo.
-* **Our Implementation:** Two integration points:
-  1. x402 payment pipeline for the 5 agents (all machine-to-machine flows go through Unlink private balances).
-  2. OSS SoundCloud API client (audio upload + payments routed through Unlink, keeping distribution untraceable from the on-chain registry).
-
-### 6.6 Prize Summary
-
-| Prize Track                          | Max Amount    | Target Placement                              |
-| :-------------------------------------| :-------------| :----------------------------------------------|
-| World — Track A (AgentKit)           | $7,500        | 1st Place ($3,500)                            |
-| World — Track B (World ID)           | $2,500        | 1st Place ($1,500)                            |
-| Chainlink — Best CRE Workflow        | $6,000        | 1 slot at $2,000                              |
-| Chainlink — Confidential AI Attester | $4,000        | 1 slot at $2,000                              |
-| Unlink — Best OSS Integration        | $2,500        | 1st Place ($2,500)                            |
-| **TOTAL TARGET**                     | **$20,500**   | *Conservative estimate (minimum targeted tiers)* |
-
----
 
 ## 7. Smart Contract Architecture
 
-### 7.1 Registry Contract (Base Sepolia)
+### 7.1 Registry Contract (ethereum sepolia)
 The Registry contract is the single source of truth for all prior-art claims. It stores:
 * `commitmentHash`: `keccak256(fingerprint + profile JSON)` — sealed at registration.
 * `worldNullifier`: World ID nullifier hash ensuring one registration per human per track.
@@ -287,23 +241,23 @@ Chainlink CRE acts as a trusted off-chain executor. Once the 5-phase DAG complet
 
 ## 8. Competitive Differentiation
 
-| Property | US Copyright Office | SACEM / CMOs | Simple NFT Timestamp | The Echo Protocol |
-| :--- | :---: | :---: | :---: | :---: |
-| **Trustless** | ✗ | ✗ | ~ | ✓ |
-| **Confidential (Pre-release)** | ✗ | ✗ | ✗ | ✓ |
-| **Sybil Resistant** | ~ | ~ | ✗ | ✓ |
-| **Multi-Agent AI Similarity Verification** | ✗ | ✗ | ✗ | ✓ |
-| **Registry + Commercial Comparison** | ✗ | ✗ | ✗ | ✓ |
-| **Final Report with Similar Track List** | ✗ | ✗ | ✗ | ✓ |
-| **Instantaneous (< 75s)** | ✗ | ✗ | ✓ | ✓ |
-| **Decentralised Storage** | ✗ | ✗ | ~ | ✓ |
+| Property                                   | US Copyright Office | SACEM / CMOs | Simple NFT Timestamp | The Echo Protocol |
+| :-------------------------------------------| :-------------------:| :------------:| :--------------------:| :-----------------:|
+| **Trustless**                              | ✗                   | ✗            | ~                    | ✓                 |
+| **Confidential (Pre-release)**             | ✗                   | ✗            | ✗                    | ✓                 |
+| **Sybil Resistant**                        | ~                   | ~            | ✗                    | ✓                 |
+| **Multi-Agent AI Similarity Verification** | ✗                   | ✗            | ✗                    | ✓                 |
+| **Registry + Commercial Comparison**       | ✗                   | ✗            | ✗                    | ✓                 |
+| **Final Report with Similar Track List**   | ✗                   | ✗            | ✗                    | ✓                 |
+| **Instantaneous (< 75s)**                  | ✗                   | ✗            | ✓                    | ✓                 |
+| **Decentralised Storage**                  | ✗                   | ✗            | ~                    | ✓                 |
 
 ---
 
 ## 9. Hackathon Deliverables & Roadmap
 
 ### 9.1 Deliverables for ETH Global New York
-1. **World ID Integration** — World Router contract on Base Sepolia, AgentKit credential issuance, free-trial mechanics (3 free registrations per human).
+1. **World ID Integration** — World Router contract on ethereum sepolia, AgentKit credential issuance, free-trial mechanics (3 free registrations per human).
 2. **5-Phase DAG CRE Workflow** — Parallelisation A ∥ B (Phase 1) and C ∥ D (Phase 2). Simulated via CRE CLI, live deployment requested from Chainlink.
 3. **4 Chainlink Confidential AI Agents** — Agents A, B, C, D in TEE. Attestations verified by the Registry contract.
 4. **Unlink SDK Integration** — x402 payments for the 5 agents + SoundCloud uploads routed via Unlink private balances.
