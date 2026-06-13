@@ -1,0 +1,15 @@
+{
+  "name": "echo-backend-gateway",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run dev-gateway/server.ts"
+  },
+  "dependencies": {
+    "@unlink-xyz/sdk": "canary"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "@types/node": "^25.9.3"
+  }
+}

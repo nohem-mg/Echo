@@ -8,6 +8,7 @@
  *   POST /api/registry         { track_id, … } → registry       :8004  /api/registry   (SEAL)
  *   POST /api/compare/commercial               → (mock — service not built yet)
  *   POST /api/report         { audio + meta }  → report-service :8005  /api/report
+ *   POST /api/soundcloud/upload{ file, meta }  → soundcloud-svc :8006  /api/soundcloud/upload
  *
  * Contract translation:
  *   - audioRef resolution (dev):
@@ -26,12 +27,15 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { getUnlinkRouteHandlers } from "./unlink-gateway.ts";
+
 const PORT = Number(process.env.ECHO_GATEWAY_PORT ?? 8080);
 const BASIC_PITCH_URL = process.env.ECHO_BASIC_PITCH_URL ?? "http://127.0.0.1:8001";
 const ACRCLOUD_URL = process.env.ECHO_ACRCLOUD_URL ?? "http://127.0.0.1:8002";
 const MIDI_URL = process.env.ECHO_MIDI_URL ?? "http://127.0.0.1:8003";
 const REGISTRY_URL = process.env.ECHO_REGISTRY_URL ?? "http://127.0.0.1:8004";
 const REPORT_URL = process.env.ECHO_REPORT_URL ?? "http://127.0.0.1:8005";
+const SOUNDCLOUD_URL = process.env.ECHO_SOUNDCLOUD_URL ?? "http://127.0.0.1:8006";
 const VERBOSE = process.env.ECHO_GATEWAY_VERBOSE !== "0";
 const DEV_AUDIO_OVERRIDE = process.env.ECHO_DEV_AUDIO;
 /** CRE sim: HTTP resp ≤250 KB, consensus observation ≤25 KB — long tracks need a short clip. */
@@ -40,6 +44,8 @@ const MAX_AUDIO_SECONDS = Number(process.env.ECHO_MAX_AUDIO_SECONDS ?? 15);
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const DEV_AUDIO = join(REPO_ROOT, "backend/fixtures/audio/arpeggio.wav");
 const DEFAULT_UPLOAD = join(REPO_ROOT, "backend/fixtures/audio/upload.mp3");
+
+const unlinkRoutes = getUnlinkRouteHandlers();
 
 const ATTESTATION_HEADER = "x-chainlink-confidential-attestation";
 const attestation = () => `mock-tee-${crypto.randomUUID()}`;
@@ -137,6 +143,23 @@ const healthy = async (baseUrl: string): Promise<boolean> => {
   }
 };
 
+/**
+ * Proxy a multipart SoundCloud upload directly to soundcloud-service.
+ * No payment layer — SoundCloud has no upload fee.
+ */
+const proxySoundCloudUpload = async (req: Request): Promise<Response> => {
+  const body = await req.formData();
+  const res = await fetch(`${SOUNDCLOUD_URL}/api/soundcloud/upload`, {
+    method: "POST",
+    body,
+  });
+  const payload = await res.json();
+  if (!res.ok) {
+    console.error(`[gateway] soundcloud-service error: ${res.status}`);
+  }
+  return Response.json(payload, { status: res.status });
+};
+
 /** Resolve an audioRef to bytes (dev/test paths — not the prod TEE path). */
 const resolveAudio = async (audioRef: string): Promise<{ bytes: Uint8Array; filename: string }> => {
   if (isUnusableAudioRef(audioRef)) {
@@ -171,7 +194,7 @@ const postAudio = async (baseUrl: string, path: string, audioRef: string): Promi
   let { bytes, filename } = await resolveAudio(audioRef);
   ({ bytes, filename } = trimAudioIfNeeded(bytes, filename));
   const form = new FormData();
-  form.append("file", new Blob([bytes]), filename);
+  form.append("file", new Blob([bytes as any]), filename);
   const res = await fetch(`${baseUrl}${path}`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`${baseUrl}${path} → ${res.status}: ${await res.text()}`);
   return res.json();
@@ -272,7 +295,7 @@ const proxyReport = async (payload: {
       ? payload.midiSequence
       : JSON.stringify(payload.midiSequence);
   const form = new FormData();
-  form.append("file", new Blob([bytes]), filename);
+  form.append("file", new Blob([bytes as any]), filename);
   form.append("registry_matches", JSON.stringify(payload.registry_matches ?? []));
   form.append("commercial_deltas", JSON.stringify(payload.commercial_deltas ?? []));
   form.append("midiSequence", midiJson);
@@ -324,12 +347,13 @@ Bun.serve({
 
     // -- Health ---------------------------------------------------------------
     if (pathname === "/health") {
-      const [bp, acr, midi, reg, rep] = await Promise.all([
+      const [bp, acr, midi, reg, rep, sc] = await Promise.all([
         healthy(BASIC_PITCH_URL),
         healthy(ACRCLOUD_URL),
         healthy(MIDI_URL),
         healthy(REGISTRY_URL),
         healthy(REPORT_URL),
+        healthy(SOUNDCLOUD_URL),
       ]);
       return json({
         status: "ok",
@@ -338,6 +362,7 @@ Bun.serve({
         midi_similarity: midi ? "ok" : "down",
         registry: reg ? "ok" : "down",
         report: rep ? "ok" : "down",
+        soundcloud: sc ? "ok" : "down",
       });
     }
 
@@ -350,6 +375,37 @@ Bun.serve({
         return json(await proxyConvert(audioFile));
       } catch (err) {
         return upstreamError(err);
+      }
+    }
+
+    // --- SoundCloud upload: direct proxy to soundcloud-service (no payment layer) ---
+    if (pathname === "/api/soundcloud/upload" && req.method === "POST") {
+      if (await healthy(SOUNDCLOUD_URL)) {
+        try {
+          return await proxySoundCloudUpload(req);
+        } catch (err) {
+          console.error("[gateway] soundcloud-service error:", err);
+          return json({ code: "upstream_error", message: String(err) }, 502);
+        }
+      }
+      // Mock when soundcloud-service is not running.
+      console.log("[gateway] mock /api/soundcloud/upload — start Docker: cd backend && docker compose up");
+      return json({
+        soundcloud_url: "https://soundcloud.com/echo-demo/mock-track",
+        track_id: 999999,
+        permalink: "mock-track",
+        request_id: crypto.randomUUID(),
+      });
+    }
+
+    // --- Unlink auth routes (for browser SDK, managed by unlink-gateway.ts) ---
+    const unlinkHandler = unlinkRoutes[pathname];
+    if (unlinkHandler && req.method === "POST") {
+      try {
+        return await unlinkHandler(req);
+      } catch (err) {
+        console.error(`[gateway] unlink error on ${pathname}:`, err);
+        return json({ code: "upstream_error", message: String(err) }, 502);
       }
     }
 
@@ -455,5 +511,6 @@ console.log(`  acrcloud        → ${ACRCLOUD_URL}   (POST /api/check/public)`);
 console.log(`  midi-similarity → ${MIDI_URL}   (POST /api/compare/private)`);
 console.log(`  registry        → ${REGISTRY_URL}   (POST /api/registry — SEAL)`);
 console.log(`  report          → ${REPORT_URL}   (POST /api/report — Step 4)`);
+console.log(`  soundcloud      → ${SOUNDCLOUD_URL}   (POST /api/soundcloud/upload)`);
 console.log(`  commercial      → mock (service not built yet)`);
 console.log(`  attestation header  → ${ATTESTATION_HEADER}`);

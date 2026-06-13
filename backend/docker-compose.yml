@@ -78,6 +78,17 @@ services:
         required: false
     restart: unless-stopped
 
+  soundcloud-service:
+    build:
+      context: .
+      dockerfile: services/soundcloud-service/Dockerfile
+    ports:
+      - "8006:8006"
+    env_file:
+      - path: ./services/soundcloud-service/.env
+        required: false
+    restart: unless-stopped
+
   registry-db:
     image: postgres:16-alpine
     environment:
@@ -93,7 +104,7 @@ services:
       # Schema is owned by the DB: every *.sql here runs once on first init.
       - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U echo -d echo"]
+      test: [ "CMD-SHELL", "pg_isready -U echo -d echo" ]
       interval: 5s
       timeout: 3s
       retries: 10
