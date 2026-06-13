@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.venv/
+__pycache__/
+*.pyc
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.key
+deployer.key
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+coverage/
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# CRE
+cre/.cre/
+
+# Audio / MIDI artifacts (temp pipeline)
+*.wav
+*.mp3
+*.mid
+*.midi
+tmp/
+uploads/
+
+# OS / editor
+.DS_Store
+*.log
+.idea/
+.vscode/
