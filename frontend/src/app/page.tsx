@@ -1453,7 +1453,6 @@ export default function Home() {
         badgeClass: "border-white/20 bg-white/5 text-white/60",
         colorClass: "text-white/60",
         showMatches: false,
-        isBlocked: false,
         bestMatch: 0,
       };
     }
@@ -1472,7 +1471,6 @@ export default function Home() {
           badgeClass: "border-[#ff7777]/60 bg-[#ff7777]/10 text-[#ff7777]",
           colorClass: "text-[#ff7777]",
           showMatches: Boolean(activeReport?.similar_tracks?.length),
-          isBlocked: true,
           bestMatch,
         };
       }
@@ -1483,7 +1481,6 @@ export default function Home() {
         badgeClass: "border-[#ffd166]/60 bg-[#ffd166]/10 text-[#ffd166]",
         colorClass: "text-[#ffd166]",
         showMatches: Boolean(activeReport?.similar_tracks?.length),
-        isBlocked: true,
         bestMatch,
       };
     }
@@ -1498,7 +1495,6 @@ export default function Home() {
         badgeClass: "border-[#9ef7c9]/60 bg-[#9ef7c9]/10 text-[#9ef7c9]",
         colorClass: "text-[#9ef7c9]",
         showMatches: Boolean(activeReport),
-        isBlocked: false,
         bestMatch,
       };
     }
@@ -1511,7 +1507,6 @@ export default function Home() {
         badgeClass: "border-[#ff7777]/60 bg-[#ff7777]/10 text-[#ff7777]",
         colorClass: "text-[#ff7777]",
         showMatches: false,
-        isBlocked: false,
         bestMatch: 0,
       };
     }
@@ -1523,7 +1518,6 @@ export default function Home() {
       badgeClass: "border-[#fff7cf]/60 bg-[#fff7cf]/10 text-[#fff7cf]",
       colorClass: "text-[#fff7cf]",
       showMatches: false,
-      isBlocked: false,
       bestMatch: 0,
     };
   }, [activeReport, bestReportMatch, flow, hasRegistrySeal, pipelineStarted, livePipelineSteps]);
@@ -1886,77 +1880,18 @@ export default function Home() {
                 ) : null}
               </div>
             </div>
-          ) : verdictInfo.isBlocked || flow?.status === "pipeline_blocked" || flow?.status === "error" ? (
-            (() => {
-              if (flow?.status === "error") {
-                return (
-                  <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/55">
-                    <p className="font-bold text-white/80">Pipeline error</p>
-                    <p className="mt-3 text-sm leading-6">{flow.error ?? "The pipeline run failed due to a system error."}</p>
-                  </div>
-                );
-              }
-
-              const blockedStep = livePipelineSteps.find((s) => s.status === "blocked");
-              const isRejected = blockedStep?.stepKey === "02A" || activeReport?.verdict === "REJECTED";
-
-              // Parse ACRCloud match detail from step 02A
-              let acrMatch: { label?: string; title?: string; artists?: string[]; ISRC?: string; score?: number } | null = null;
-              if (isRejected) {
-                const step2a = livePipelineSteps.find((s) => s.stepKey === "02A");
-                try { acrMatch = step2a?.detail ? JSON.parse(step2a.detail) : null; } catch { /* ignore */ }
-              }
-
-              // Prefer report similar_tracks if available
-              const match = activeReport?.similar_tracks?.[0];
-              const trackTitle = match?.title ?? acrMatch?.label ?? acrMatch?.title ?? null;
-              const artists = acrMatch?.artists?.join(", ") ?? null;
-              const isrc = acrMatch?.ISRC ?? (match?.key?.startsWith("ISRC ") ? match.key.slice(5) : null);
-              const score = match?.score ?? acrMatch?.score ?? null;
-
-              return (
-                <div className="overflow-hidden rounded-[8px] border border-white/15 bg-[#080808]">
-                  <div className="border-b border-white/10 p-5 sm:p-6">
-                    <p className="text-xs font-bold uppercase tracking-wider text-white/40">
-                      {isRejected ? "Acoustic match identified" : "Compositional similarity detected"}
-                    </p>
-                    {trackTitle ? (
-                      <p className="mt-2 text-xl font-black text-white">{trackTitle}</p>
-                    ) : null}
-                    {artists ? (
-                      <p className="mt-1 text-sm text-white/60">{artists}</p>
-                    ) : null}
-                  </div>
-                  <div className="grid grid-cols-2 divide-x divide-white/10 border-b border-white/10 sm:grid-cols-4">
-                    {score !== null ? (
-                      <div className="p-4">
-                        <p className="text-xs uppercase tracking-wider text-white/40">Match score</p>
-                        <p className="mt-1 text-2xl font-black text-[#ff7777]">{score}%</p>
-                      </div>
-                    ) : null}
-                    {isrc ? (
-                      <div className="p-4">
-                        <p className="text-xs uppercase tracking-wider text-white/40">ISRC</p>
-                        <p className="mt-1 font-mono text-sm text-white/80">{isrc}</p>
-                      </div>
-                    ) : null}
-                    <div className="p-4">
-                      <p className="text-xs uppercase tracking-wider text-white/40">Source</p>
-                      <p className="mt-1 text-sm text-white/80">{isRejected ? "ACRCloud" : "Private registry"}</p>
-                    </div>
-                    <div className="p-4">
-                      <p className="text-xs uppercase tracking-wider text-white/40">On-chain seal</p>
-                      <p className="mt-1 text-sm font-bold text-[#ff7777]">Blocked</p>
-                    </div>
-                  </div>
-                  <p className="p-5 text-sm leading-6 text-white/50 sm:p-6">
-                    {activeReport?.ai_summary
-                      ?? blockedStep?.reason
-                      ?? "No on-chain seal was created. The track did not pass the prior-art check."}
-                  </p>
-                </div>
-              );
-            })()
+          ) : flow?.status === "pipeline_blocked" || flow?.status === "error" ? (
+            <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/55">
+              <p className="font-bold text-white/80">
+                {flow.status === "pipeline_blocked" ? "Analyse terminée — aucun seal on-chain" : "Erreur pipeline"}
+              </p>
+              <p className="mt-3 text-sm leading-6">
+                {activeReport?.ai_summary
+                  ?? livePipelineSteps.find((step) => step.status === "blocked")?.reason
+                  ?? flow.error
+                  ?? "Aucune transaction Registry n'a été créée."}
+              </p>
+            </div>
           ) : (
             <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/45">
               {pipelineStarted ? "Verification in progress..." : "No track has been verified yet."}

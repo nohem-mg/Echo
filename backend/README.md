@@ -31,27 +31,6 @@ docker compose up --build            # all services
 docker compose up --build acrcloud-service   # just one
 ```
 
-### Registre privé 2B partagé (équipe)
-
-Par défaut, chaque machine a sa propre Postgres Docker (`registry-db`). Pour que Marius, Jean, Cyriac et toi voyez **le même registre Step 2B** en local :
-
-1. Créer une Postgres cloud (Neon, Vercel Postgres, etc.) — base dédiée `echo_registry` (≠ `DATABASE_URL` frontend).
-2. Une fois le schéma :
-   ```bash
-   cd backend
-   cp .env.example .env
-   # éditer ECHO_REGISTRY_DATABASE_URL=postgresql://...
-   ./scripts/init-registry-schema.sh
-   ```
-3. Démarrer sans la Postgres locale :
-   ```bash
-   docker compose -f docker-compose.yml -f docker-compose.shared-registry.yml up --build
-   ```
-
-Tous les devs utilisent la **même** `ECHO_REGISTRY_DATABASE_URL` dans `backend/.env`. Les tracks SEALED (verdict CLEAN) y sont visibles pour tout le monde en 2B.
-
-> ACRCloud reste requis par machine (`services/acrcloud-service/.env`) pour le REJECTED Werenoi en 2A.
-
 Build context is `backend/` so each image bundles `echo-common` with its service.
 
 ## Develop a single service
