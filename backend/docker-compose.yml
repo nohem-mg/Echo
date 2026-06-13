@@ -12,6 +12,7 @@ services:
       - "8001:8001"
     env_file:
       - path: ./services/basic-pitch-service/.env
+        required: false
     restart: unless-stopped
 
   acrcloud-service:
@@ -20,9 +21,7 @@ services:
       dockerfile: services/acrcloud-service/Dockerfile
     ports:
       - "8002:8002"
-    # Committed defaults, then the real .env (gitignored) overrides if present.
     env_file:
-      - path: ./services/acrcloud-service/.env.example
       - path: ./services/acrcloud-service/.env
         required: false
     restart: unless-stopped
