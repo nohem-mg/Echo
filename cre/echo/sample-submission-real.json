@@ -1,0 +1,8 @@
+{
+  "input": {
+    "audioRef": "file://backend/fixtures/audio/upload.mp3",
+    "commitmentHash": "0xabc123def4567890abc123def4567890abc123def4567890abc123def4567890",
+    "worldNullifier": "0x0011223344556677889900112233445566778899001122334455667788990011",
+    "trackId": "0x1B2FE051773D10FFB1C404699FEE582691D792E5EF107768DB693C126B451FCF"
+  }
+}

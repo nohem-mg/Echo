@@ -16,10 +16,14 @@ import type {
   CompareCommercialResponse,
   ComparePrivateResponse,
   ConvertResponse,
+  RegisterResponse,
   RegistryMatch,
   ReportResponse,
 } from "./types";
 
+
+/** Escape a JSON string value for embedding in a bodyString `"{{.key}}"` slot. */
+const midiSequenceEscaped = (midiSequence: string) => JSON.stringify(midiSequence).slice(1, -1);
 
 function confPost<C, T>(
   runtime: Runtime<C>,
@@ -95,8 +99,8 @@ export function stepComparePrivateConfidential<C>(
     baseUrl,
     "/api/compare/private",
     "step2b-compare-private",
-    '{"midiSequence":"{{.midiSequence}}"}',
-    { midiSequence },
+    '{"midiSequence":"{{.midiSequenceEscaped}}"}',
+    { midiSequenceEscaped: midiSequenceEscaped(midiSequence) },
     ctx,
     options,
   );
@@ -116,8 +120,35 @@ export function stepCompareCommercialConfidential<C>(
     baseUrl,
     "/api/compare/commercial",
     "step3-compare-commercial",
-    '{"midiSequence":"{{.midiSequence}}","ISRCs":{{.isrcsJson}}}',
-    { midiSequence, isrcsJson: JSON.stringify(ISRCs) },
+    '{"midiSequence":"{{.midiSequenceEscaped}}","ISRCs":{{.isrcsJson}}}',
+    { midiSequenceEscaped: midiSequenceEscaped(midiSequence), isrcsJson: JSON.stringify(ISRCs) },
+    ctx,
+    options,
+  );
+}
+
+// SEAL — persist unreleased MIDI in the private registry (verdict CLEAN only).
+export function stepRegisterConfidential<C>(
+  runtime: Runtime<C>,
+  baseUrl: string,
+  args: { trackId: string; midiSequence: string; fingerprint?: string },
+  ctx: ConfidentialClientContext,
+  options: ConfidentialClientOptions,
+): Deferred<RegisterResponse> {
+  const fingerprintJson = args.fingerprint
+    ? JSON.stringify({ hash: args.fingerprint })
+    : "null";
+  return confPost(
+    runtime,
+    baseUrl,
+    "/api/registry",
+    "step5-registry-seal",
+    '{"track_id":"{{.trackId}}","midiSequence":"{{.midiSequenceEscaped}}","fingerprint":{{.fingerprintJson}}}',
+    {
+      trackId: args.trackId,
+      midiSequenceEscaped: midiSequenceEscaped(args.midiSequence),
+      fingerprintJson,
+    },
     ctx,
     options,
   );
@@ -141,10 +172,10 @@ export function stepReportConfidential<C>(
     baseUrl,
     "/api/report",
     "step4-report",
-    '{"audioFile":"{{.audioRef}}","midiSequence":"{{.midiSequence}}","registry_matches":{{.registryJson}},"commercial_deltas":{{.commercialJson}}}',
+    '{"audioFile":"{{.audioRef}}","midiSequence":"{{.midiSequenceEscaped}}","registry_matches":{{.registryJson}},"commercial_deltas":{{.commercialJson}}}',
     {
       audioRef: args.audioRef,
-      midiSequence: args.midiSequence,
+      midiSequenceEscaped: midiSequenceEscaped(args.midiSequence),
       registryJson: JSON.stringify(args.registry_matches),
       commercialJson: JSON.stringify(args.commercial_deltas),
     },

@@ -72,9 +72,8 @@ export function requireAgentAttestation(response: HTTPResponse, step: string): A
 }
 
 /**
- * ABI-encoded payload for runtime.report() — matches receiveCRECallback(bytes32,uint8,bytes).
- * The Chainlink forwarder decodes (trackId, verdict) from the rawReport body
- * and calls Registry.receiveCRECallback(trackId, Status(verdict), rawReport).
+ * ABI-encoded payload for runtime.report().
+ * The Registry.onReport receiver decodes (trackId, verdict) from rawReport.
  */
 export function encodeCallbackReportPayload(result: PipelineResult): Hex {
   const status = VERDICT_TO_STATUS[result.verdict] ?? 3; // default REJECTED on unknown
@@ -86,7 +85,7 @@ export function encodeCallbackReportPayload(result: PipelineResult): Hex {
 
 /**
  * Builds a DON-signed CRE report (hex rawReport) bundling verdict,
- * commitmentHash, and all agent attestations for receiveCRECallback().
+ * commitmentHash, and all agent attestations for Registry.onReport().
  * Returns both the hex attestation string and the Report object
  * (needed by EVMClient.writeReport for on-chain dispatch).
  */

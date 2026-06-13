@@ -78,9 +78,10 @@ export type EchoFlow = {
   paymentAmountEth?: string;
   paymentChainId?: number;
   txHash?: `0x${string}`;
+  commitmentHash?: `0x${string}`;
+  registryRef?: `0x${string}`;
   registryTrackId?: `0x${string}`;
   registryTxHash?: `0x${string}`;
-  registryRef?: `0x${string}`;
   report?: EchoReport;
   status: EchoFlowStatus;
   error?: string;
