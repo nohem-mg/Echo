@@ -22,6 +22,16 @@ staging-settings:
     workflow-path: "./main.ts"
     config-path: "./config.staging.json"
     secrets-path: "../secrets.yaml"
+
+# Local dev with real audio files (file:// / ECHO_DEV_AUDIO). No Confidential HTTP
+# so audioRef from the trigger payload reaches the gateway unchanged.
+dev-audio-settings:
+  user-workflow:
+    workflow-name: "echo-dev-audio"
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: "./config.dev-audio.json"
+    secrets-path: "../secrets.yaml"
     
 
 # ==========================================================================

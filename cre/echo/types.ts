@@ -53,6 +53,14 @@ export type ComparePrivateResponse = {
 };
 
 // --------------------------------------------------------------------------
+// SEAL — POST /api/registry  (persist sealed track in private PostgreSQL registry)
+// --------------------------------------------------------------------------
+export type RegisterResponse = {
+  track_id: string;
+  request_id: string;
+};
+
+// --------------------------------------------------------------------------
 // Step 3 — POST /api/compare/commercial  (submitted MIDI vs commercial MIDIs)
 // --------------------------------------------------------------------------
 export type CommercialDelta = {

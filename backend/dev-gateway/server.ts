@@ -10,18 +10,20 @@
  *   POST /api/report                           → (mock — service not built yet)
  *
  * Contract translation:
- *   - audioRef is resolved to bytes: a signed http(s) URL is fetched for real; any
- *     other ref falls back to the shared dev fixture, logged as a stand-in.
- *   - midiSequence arrives as a JSON string (convert's output); compare/registry want
- *     an object, so we parse it before forwarding.
- *   - check/public: only matches >= 50% are forwarded (AGENTS.md), normalised to
- *     { ISRC, confidence_score }; cover_matches passed through for downstream use.
+ *   - audioRef resolution (dev):
+ *       file://backend/fixtures/audio/upload.mp3  — local file (repo-relative or absolute)
+ *       https://…                                 — fetched over HTTP
+ *       ECHO_DEV_AUDIO=/path/to/track.mp3         — override when sim sends `<no value>`
+ *       (fallback)                                — arpeggio.wav fixture
+ *   - Set ECHO_GATEWAY_VERBOSE=1 for detailed request/response logs (default: on).
  *
  * Run (host):  bun backend/dev-gateway/server.ts   (services up: cd backend && docker compose up)
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.ECHO_GATEWAY_PORT ?? 8080);
@@ -29,14 +31,95 @@ const BASIC_PITCH_URL = process.env.ECHO_BASIC_PITCH_URL ?? "http://127.0.0.1:80
 const ACRCLOUD_URL = process.env.ECHO_ACRCLOUD_URL ?? "http://127.0.0.1:8002";
 const MIDI_URL = process.env.ECHO_MIDI_URL ?? "http://127.0.0.1:8003";
 const REGISTRY_URL = process.env.ECHO_REGISTRY_URL ?? "http://127.0.0.1:8004";
+const VERBOSE = process.env.ECHO_GATEWAY_VERBOSE !== "0";
+const DEV_AUDIO_OVERRIDE = process.env.ECHO_DEV_AUDIO;
+/** CRE sim: HTTP resp ≤250 KB, consensus observation ≤25 KB — long tracks need a short clip. */
+const MAX_AUDIO_SECONDS = Number(process.env.ECHO_MAX_AUDIO_SECONDS ?? 15);
 
-const DEV_AUDIO = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "../fixtures/audio/arpeggio.wav",
-);
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const DEV_AUDIO = join(REPO_ROOT, "backend/fixtures/audio/arpeggio.wav");
+const DEFAULT_UPLOAD = join(REPO_ROOT, "backend/fixtures/audio/upload.mp3");
 
 const ATTESTATION_HEADER = "x-chainlink-confidential-attestation";
 const attestation = () => `mock-tee-${crypto.randomUUID()}`;
+
+const vlog = (...args: unknown[]) => {
+  if (VERBOSE) console.log("[gateway]", ...args);
+};
+
+/** CRE sends midiSequence as a JSON string; ConfidentialHTTP may send a parsed object. */
+const normalizeMidiSequence = (raw: string | Record<string, unknown>) =>
+  typeof raw === "string" ? JSON.parse(raw) : raw;
+
+const formatBytes = (n: number) =>
+  n >= 1_048_576 ? `${(n / 1_048_576).toFixed(1)} MB` : `${(n / 1024).toFixed(1)} KB`;
+
+const summarizeMidi = (raw: string | Record<string, unknown>) => {
+  try {
+    const m = normalizeMidiSequence(raw) as { n_notes?: number; duration_s?: number; notes?: unknown[] };
+    return `${m.n_notes ?? m.notes?.length ?? "?"} notes, ${m.duration_s ?? "?"}s`;
+  } catch {
+    return typeof raw === "string" ? `${raw.length} chars` : "object";
+  }
+};
+
+const isUnusableAudioRef = (audioRef: string) =>
+  !audioRef ||
+  audioRef === "<no value>" ||
+  audioRef.includes("echo-backend.xyz");
+
+const readLocalAudio = (path: string, source: string) => {
+  const resolved = path.startsWith("/") ? path : join(REPO_ROOT, path);
+  if (!existsSync(resolved)) throw new Error(`audio file not found: ${resolved}`);
+  const { size } = statSync(resolved);
+  vlog(`audio ← ${source}: ${resolved} (${formatBytes(size)})`);
+  return { bytes: readFileSync(resolved), filename: basename(resolved) };
+};
+
+const probeDurationSeconds = (path: string): number | null => {
+  const r = spawnSync(
+    "ffprobe",
+    ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+    { encoding: "utf8" },
+  );
+  if (r.status !== 0) return null;
+  const n = Number(r.stdout?.trim());
+  return Number.isFinite(n) ? n : null;
+};
+
+/** Trim long audio so BasicPitch MIDI + CRE HTTP body stay under sim limits (~250 KB). */
+const trimAudioIfNeeded = (
+  bytes: Uint8Array,
+  filename: string,
+): { bytes: Uint8Array; filename: string } => {
+  if (MAX_AUDIO_SECONDS <= 0) return { bytes, filename };
+
+  const dir = mkdtempSync(join(tmpdir(), "echo-audio-"));
+  const input = join(dir, filename.replace(/[^\w.-]/g, "_") || "input");
+  const output = join(dir, "clip.mp3");
+  try {
+    writeFileSync(input, bytes);
+    const duration = probeDurationSeconds(input);
+    if (duration == null || duration <= MAX_AUDIO_SECONDS) return { bytes, filename };
+
+    const ff = spawnSync(
+      "ffmpeg",
+      ["-y", "-i", input, "-t", String(MAX_AUDIO_SECONDS), "-q:a", "2", output],
+      { encoding: "utf8" },
+    );
+    if (ff.status !== 0) {
+      vlog(`ffmpeg trim failed (${duration.toFixed(0)}s) — sending full file (CRE sim limit: consensus ≤25 KB)`);
+      return { bytes, filename };
+    }
+    const trimmed = readFileSync(output);
+    vlog(
+      `audio trimmed ${duration.toFixed(1)}s → ${MAX_AUDIO_SECONDS}s (${formatBytes(bytes.length)} → ${formatBytes(trimmed.length)})`,
+    );
+    return { bytes: trimmed, filename: "clip.mp3" };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
 
 const json = (data: unknown, status = 200) =>
   Response.json(data, {
@@ -53,27 +136,39 @@ const healthy = async (baseUrl: string): Promise<boolean> => {
   }
 };
 
-/** Resolve an audioRef to bytes. A signed http(s) URL is fetched for real; any other
- *  ref falls back to the shared dev fixture (logged), so the pipeline stays runnable.
- *
- *  NOTE — confidentiality: fetching a hosted URL means the audio was put on a server,
- *  which is NOT the confidential path (the raw audio must never be exposed before the
- *  artist's REVEAL). URL-fetch here is a DEV/TEST convenience only. The faithful path is
- *  a direct multipart upload straight into the service (in-memory, temp file deleted
- *  after processing, never persisted) — in prod the audio stays inside the TEE. */
+/** Resolve an audioRef to bytes (dev/test paths — not the prod TEE path). */
 const resolveAudio = async (audioRef: string): Promise<{ bytes: Uint8Array; filename: string }> => {
-  if (audioRef.startsWith("http://") || audioRef.startsWith("https://")) {
-    const res = await fetch(audioRef, { signal: AbortSignal.timeout(15000) });
-    if (!res.ok) throw new Error(`fetch audioRef → ${res.status}`);
-    return { bytes: new Uint8Array(await res.arrayBuffer()), filename: audioRef.split("/").pop() || "audio" };
+  if (isUnusableAudioRef(audioRef)) {
+    if (DEV_AUDIO_OVERRIDE) return readLocalAudio(DEV_AUDIO_OVERRIDE, "ECHO_DEV_AUDIO");
+    if (existsSync(DEFAULT_UPLOAD)) return readLocalAudio(DEFAULT_UPLOAD, "default upload.mp3");
+    vlog(`audioRef unusable (${audioRef}) — fallback arpeggio.wav`);
+    return readLocalAudio(DEV_AUDIO, "fixture");
   }
-  console.warn(`[gateway] audioRef '${audioRef.slice(0, 40)}' not a fetchable URL — using DEV FIXTURE`);
-  return { bytes: readFileSync(DEV_AUDIO), filename: "arpeggio.wav" };
+
+  if (audioRef.startsWith("file://")) {
+    const path = audioRef.slice("file://".length);
+    return readLocalAudio(path, "file://");
+  }
+
+  if (audioRef.startsWith("http://") || audioRef.startsWith("https://")) {
+    vlog(`audio ← fetch: ${audioRef}`);
+    const res = await fetch(audioRef, { signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`fetch audioRef → ${res.status}`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    vlog(`audio ← fetched ${formatBytes(bytes.length)}`);
+    return { bytes, filename: audioRef.split("/").pop()?.split("?")[0] || "audio" };
+  }
+
+  if (existsSync(audioRef)) return readLocalAudio(audioRef, "path");
+
+  vlog(`audioRef '${audioRef.slice(0, 48)}' unknown — fallback arpeggio.wav`);
+  return readLocalAudio(DEV_AUDIO, "fixture");
 };
 
 /** Resolve audioRef → bytes, POST as multipart to an audio service, return its JSON. */
 const postAudio = async (baseUrl: string, path: string, audioRef: string): Promise<any> => {
-  const { bytes, filename } = await resolveAudio(audioRef);
+  let { bytes, filename } = await resolveAudio(audioRef);
+  ({ bytes, filename } = trimAudioIfNeeded(bytes, filename));
   const form = new FormData();
   form.append("file", new Blob([bytes]), filename);
   const res = await fetch(`${baseUrl}${path}`, { method: "POST", body: form });
@@ -94,53 +189,84 @@ const postJson = async (baseUrl: string, path: string, body: unknown): Promise<a
 
 // Step 1 — audio → MIDI.
 const proxyConvert = async (audioFile: string) => {
+  vlog(`→ POST /api/convert  audioFile=${JSON.stringify(audioFile)}`);
   const body = (await postAudio(BASIC_PITCH_URL, "/api/convert", audioFile)) as { midi_sequence: unknown };
-  console.log(`[gateway] convert via basic-pitch (audioRef=${audioFile.slice(0, 32)}…)`);
-  return { midiSequence: JSON.stringify(body.midi_sequence) }; // CRE contract: { midiSequence: string }
+  const out = { midiSequence: JSON.stringify(body.midi_sequence) };
+  const bytes = JSON.stringify(out).length;
+  vlog(`← convert OK  ${summarizeMidi(out.midiSequence)}  response=${bytes} bytes`);
+  if (bytes > 24_000) {
+    vlog(`⚠ CRE sim consensus limit is 25 KB — shorten clip: ECHO_MAX_AUDIO_SECONDS=10`);
+  }
+  return out;
 };
 
 // Step 2A — acoustic fingerprint. CRE reads matches[].{ISRC, confidence_score}.
 const proxyCheckPublic = async (audioFile: string) => {
+  vlog(`→ POST /api/check/public  audioFile=${JSON.stringify(audioFile)}`);
   const body = (await postAudio(ACRCLOUD_URL, "/api/check/public", audioFile)) as {
-    matches: Array<{ ISRC: string | null; confidence_score: number }>;
-    cover_matches?: Array<{ ISRC: string | null; confidence_score: number }>;
+    matches: Array<{ ISRC: string | null; confidence_score: number; title?: string; artists?: string[] }>;
+    cover_matches?: Array<{ ISRC: string | null; confidence_score: number; title?: string }>;
   };
-  console.log(`[gateway] check/public via acrcloud (${body.matches.length} matches, audioRef=${audioFile.slice(0, 32)}…)`);
-  return {
-    // AGENTS.md: never return below 50%. Normalised to the CRE contract shape.
-    matches: body.matches
-      .filter((m) => m.confidence_score >= 50)
-      .map((m) => ({ ISRC: m.ISRC ?? "", confidence_score: m.confidence_score })),
-    cover_matches: body.cover_matches ?? [], // melodic candidates, passed through
-  };
+  const matches = body.matches
+    .filter((m) => m.confidence_score >= 50)
+    .map((m) => ({ ISRC: m.ISRC ?? "", confidence_score: m.confidence_score }));
+  vlog(
+    `← check/public OK  raw=${body.matches.length} match(es) ≥50%=${matches.length}`,
+    matches.length
+      ? matches.map((m) => `${m.ISRC}@${m.confidence_score}%`).join(", ")
+      : "(none — Step 3 skipped)",
+  );
+  if (VERBOSE && body.matches.length > 0 && matches.length === 0) {
+    vlog(
+      "  below-threshold:",
+      body.matches.map((m) => `${m.ISRC ?? "?"}@${m.confidence_score}%`).join(", "),
+    );
+  }
+  return { matches, cover_matches: body.cover_matches ?? [] };
 };
 
-// Step 2B — compositional similarity. midiSequence is a JSON string → parse → forward.
-const proxyComparePrivate = async (midiSequence: string) => {
-  const midi = JSON.parse(midiSequence);
+// Step 2B — compositional similarity.
+const proxyComparePrivate = async (midiSequence: string | Record<string, unknown>) => {
+  vlog(`→ POST /api/compare/private  midi=${summarizeMidi(midiSequence)}`);
+  const midi = normalizeMidiSequence(midiSequence);
   const body = await postJson(MIDI_URL, "/api/compare/private", { midiSequence: midi });
-  console.log(`[gateway] compare/private via midi-similarity (${body.registry_matches?.length ?? 0} match)`);
-  return body; // { registry_matches, request_id }
+  const top = (body.registry_matches ?? []) as Array<{ track_id: string; similarity_score: number }>;
+  vlog(
+    `← compare/private OK  ${top.length} match(es)`,
+    top.length ? top.map((m) => `${m.track_id.slice(0, 10)}…@${m.similarity_score}%`).join(", ") : "(none)",
+  );
+  return body;
 };
 
-// SEAL — persist the track in the private registry. Called by the CRE at the end.
-const proxyRegister = async (payload: { track_id: string; midiSequence: string; fingerprint?: unknown }) => {
+// SEAL — persist the track in the private registry.
+const proxyRegister = async (payload: {
+  track_id: string;
+  midiSequence: string | Record<string, unknown>;
+  fingerprint?: unknown;
+}) => {
+  vlog(`→ POST /api/registry  track_id=${payload.track_id}  midi=${summarizeMidi(payload.midiSequence)}`);
   const body = await postJson(REGISTRY_URL, "/api/registry", {
     track_id: payload.track_id,
-    midiSequence: JSON.parse(payload.midiSequence),
+    midiSequence: normalizeMidiSequence(payload.midiSequence),
     fingerprint: payload.fingerprint ?? null,
   });
-  console.log(`[gateway] registry add via registry-service (track_id=${payload.track_id})`);
-  return body; // { track_id, request_id }
+  vlog(`← registry OK  track_id=${body.track_id ?? payload.track_id}`);
+  return body;
 };
 
 /** Fallbacks when a service isn't up yet — keeps the CRE DAG runnable in pure-mock mode. */
 const mockConvert = (audioFile: string) => {
-  console.log("[gateway] convert MOCK — start Docker: cd backend && docker compose up");
+  vlog("← convert MOCK (basic-pitch down)");
   return { midiSequence: JSON.stringify({ notes: [], duration_s: 0, n_notes: 0, mock: true, audioRef: audioFile }) };
 };
-const mockCheckPublic = () => ({ matches: [{ ISRC: "USRC12345", confidence_score: 68 }], cover_matches: [] });
-const mockComparePrivate = () => ({ registry_matches: [{ track_id: "t-42", similarity_score: 40 }] });
+const mockCheckPublic = () => {
+  vlog("← check/public MOCK");
+  return { matches: [{ ISRC: "USRC12345", confidence_score: 68 }], cover_matches: [] };
+};
+const mockComparePrivate = () => {
+  vlog("← compare/private MOCK");
+  return { registry_matches: [{ track_id: "t-42", similarity_score: 40 }] };
+};
 
 // Services not built yet — always mocked.
 const mockRoutes: Record<string, () => unknown> = {
@@ -213,8 +339,10 @@ Bun.serve({
 
     // -- Step 2B: /api/compare/private ----------------------------------------
     if (pathname === "/api/compare/private" && req.method === "POST") {
-      const { midiSequence } = (await req.json()) as { midiSequence?: string };
-      if (!midiSequence) return json({ code: "validation_error", message: "midiSequence required" }, 422);
+      const { midiSequence } = (await req.json()) as {
+        midiSequence?: string | Record<string, unknown>;
+      };
+      if (midiSequence == null) return json({ code: "validation_error", message: "midiSequence required" }, 422);
       if (!(await healthy(MIDI_URL))) return json(mockComparePrivate());
       try {
         return json(await proxyComparePrivate(midiSequence));
@@ -225,13 +353,23 @@ Bun.serve({
 
     // -- SEAL: /api/registry --------------------------------------------------
     if (pathname === "/api/registry" && req.method === "POST") {
-      const payload = (await req.json()) as { track_id?: string; midiSequence?: string; fingerprint?: unknown };
-      if (!payload.track_id || !payload.midiSequence) {
+      const payload = (await req.json()) as {
+        track_id?: string;
+        midiSequence?: string | Record<string, unknown>;
+        fingerprint?: unknown;
+      };
+      if (!payload.track_id || payload.midiSequence == null) {
         return json({ code: "validation_error", message: "track_id and midiSequence required" }, 422);
       }
       if (!(await healthy(REGISTRY_URL))) return json({ code: "upstream_error", message: "registry down" }, 502);
       try {
-        return json(await proxyRegister(payload as { track_id: string; midiSequence: string; fingerprint?: unknown }));
+        return json(
+          await proxyRegister(payload as {
+            track_id: string;
+            midiSequence: string | Record<string, unknown>;
+            fingerprint?: unknown;
+          }),
+        );
       } catch (err) {
         return upstreamError(err);
       }
@@ -241,15 +379,18 @@ Bun.serve({
     const mock = mockRoutes[pathname];
     if (mock && req.method === "POST") {
       await req.text();
-      console.log(`[gateway] mock ${pathname}`);
-      return json(mock());
+      vlog(`→ POST ${pathname}  (MOCK — service not built)`);
+      const data = mock();
+      vlog(`← ${pathname} MOCK`, JSON.stringify(data).slice(0, 120));
+      return json(data);
     }
 
     return new Response("not found", { status: 404 });
   },
 });
 
-console.log(`Echo dev gateway → http://127.0.0.1:${PORT}`);
+console.log(`Echo dev gateway → http://127.0.0.1:${PORT}  (verbose=${VERBOSE ? "on" : "off"}, maxAudio=${MAX_AUDIO_SECONDS}s)`);
+console.log(`  real audio  → file://backend/fixtures/audio/upload.mp3  |  ECHO_DEV_AUDIO=/path/to/track.mp3`);
 console.log(`  basic-pitch     → ${BASIC_PITCH_URL}   (POST /api/convert)`);
 console.log(`  acrcloud        → ${ACRCLOUD_URL}   (POST /api/check/public)`);
 console.log(`  midi-similarity → ${MIDI_URL}   (POST /api/compare/private)`);

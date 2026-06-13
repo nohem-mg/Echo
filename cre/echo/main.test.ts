@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { initWorkflow, runPipelineWithClient, type Config } from "./main";
+import { parsePipelineInput } from "./parse-input";
 import { BackendError, type Deferred } from "./backend";
 import type { PipelineClient } from "./client";
 import type {
@@ -58,6 +59,7 @@ const makeClient = (opts: {
     compareCommercial: () =>
       guard("compareCommercial", { commercial_deltas: opts.commercial ?? [] }),
     report: () => guard("report", opts.report ?? REPORT),
+    register: () => guard("register", { track_id: INPUT.trackId, request_id: "req-test" }),
     getAgentAttestations: () => [],
   };
   return { client, calls };
@@ -120,7 +122,7 @@ describe("fail-fast — Step 2B (similarity >= 75%)", () => {
 });
 
 describe("fail-fast — HTTP / timeout error on any step", () => {
-  for (const step of ["convert", "checkPublic", "comparePrivate", "report"] as const) {
+  for (const step of ["convert", "checkPublic", "comparePrivate", "report", "register"] as const) {
     test(`${step} failure -> ERROR, no partial state`, () => {
       const { client, calls } = makeClient({
         matches: [{ ISRC: "USRC1", confidence_score: 60 }],
@@ -165,6 +167,7 @@ describe("happy path", () => {
     expect(res.verdict).toBe("CLEAN");
     expect(res.report).toBeDefined();
     expect(calls).toContain("compareCommercial");
+    expect(calls).toContain("register");
   });
 
   test("Step 3 skipped when no ACRCloud match >= 50%", () => {
@@ -178,6 +181,27 @@ describe("happy path", () => {
     expect(res.verdict).toBe("CLEAN");
     expect(calls).not.toContain("compareCommercial");
     expect(calls).toContain("report");
+    expect(calls).toContain("register");
+  });
+
+  test("REJECTED does not call register", () => {
+    const { client, calls } = makeClient({
+      matches: [{ ISRC: "USRC1", confidence_score: 96 }],
+    });
+
+    runPipelineWithClient(noop, client, INPUT);
+
+    expect(calls).not.toContain("register");
+  });
+});
+
+describe("parsePipelineInput", () => {
+  test("accepts flat PipelineInput", () => {
+    expect(parsePipelineInput(INPUT).trackId).toBe(INPUT.trackId);
+  });
+
+  test("accepts wrapped { input: PipelineInput }", () => {
+    expect(parsePipelineInput({ input: INPUT }).trackId).toBe(INPUT.trackId);
   });
 });
 

@@ -21,6 +21,7 @@ import { BackendError } from "./backend";
 import { buildRegistryCallback } from "./callback";
 import { createBackendClient, type PipelineClient } from "./client";
 import { dispatchOnChainCallback } from "./evm-callback";
+import { parsePipelineInput } from "./parse-input";
 import {
   THRESHOLD_ACR_MIN,
   THRESHOLD_PLAGIARISM,
@@ -52,6 +53,25 @@ export type Config = {
 
 // Minimal logger so the core DAG logic stays decoupled from the CRE runtime.
 type Logger = (message: string) => void;
+
+const summarizeMidiRef = (midiSequence: string): string => {
+  try {
+    const m = JSON.parse(midiSequence) as { n_notes?: number; duration_s?: number };
+    return `${m.n_notes ?? "?"} notes, ${m.duration_s ?? "?"}s`;
+  } catch {
+    return `${midiSequence.length} chars`;
+  }
+};
+
+const formatMatches2a = (matches: { ISRC: string; confidence_score: number }[]) =>
+  matches.length === 0
+    ? "none"
+    : matches.map((m) => `${m.ISRC}@${m.confidence_score}%`).join(", ");
+
+const formatMatches2b = (matches: { track_id: string; similarity_score: number }[]) =>
+  matches.length === 0
+    ? "none"
+    : matches.map((m) => `${m.track_id.slice(0, 10)}…@${m.similarity_score}%`).join(", ");
 
 // Fail-fast halt: returns a terminal verdict with no partial state.
 const halt = (
@@ -120,18 +140,21 @@ export const runPipelineWithClient = (
   input: PipelineInput,
 ): PipelineResult => {
   try {
+    log(`Input — trackId=${input.trackId}  audioRef=${input.audioRef}`);
+
     // ---- Step 1 — audio -> MIDI conversion (prerequisite for 2A and 2B) --
     log("Step 1 — audio -> MIDI conversion (BasicPitch)");
     const { midiSequence } = client.convert(input.audioRef).result();
+    log(`Step 1 OK — midiSequence: ${summarizeMidiRef(midiSequence)}`);
 
     // ---- Step 2 — 2A ∥ 2B ------------------------------------------------
-    // Start both deferred calls BEFORE resolving — CRE equivalent of Promise.all.
-    // 2A: ACRCloud (raw audio) | 2B: MIDI algo (private registry).
     log("Step 2 — parallel comparison 2A ∥ 2B");
     const handle2a = client.checkPublic(input.audioRef);
     const handle2b = client.comparePrivate(midiSequence);
     const matches = handle2a.result().matches;
     const registryMatches = handle2b.result().registry_matches;
+    log(`Step 2A OK — ACRCloud matches (≥50%): ${formatMatches2a(matches)}`);
+    log(`Step 2B OK — registry matches: ${formatMatches2b(registryMatches)}`);
 
     // ---- Fail-fast 2A: obvious plagiarism ---------------------------------
     const plagiarism = matches.find((m) => m.confidence_score >= THRESHOLD_PLAGIARISM);
@@ -165,9 +188,10 @@ export const runPipelineWithClient = (
 
     let commercialDeltas: CommercialDelta[] = [];
     if (eligibleISRCs.length > 0) {
-      log(`Step 3 — MIDI comparison vs ${eligibleISRCs.length} commercial track(s)`);
+      log(`Step 3 — MIDI comparison vs ISRCs: ${eligibleISRCs.join(", ")}`);
       commercialDeltas = client.compareCommercial(midiSequence, eligibleISRCs).result()
         .commercial_deltas;
+      log(`Step 3 OK — ${commercialDeltas.length} commercial delta(s)`);
     } else {
       log("Step 3 — skipped (no ACRCloud match >= 50%)");
     }
@@ -183,7 +207,27 @@ export const runPipelineWithClient = (
       })
       .result();
 
+    log(
+      `Step 4 OK — verdict=${report.verdict}  key=${report.submitted_track.key} ${report.submitted_track.mode}  BPM=${report.submitted_track.BPM}  fp=${report.submitted_track.fingerprint}`,
+    );
+    if (report.similar_tracks.length > 0) {
+      log(`  similar_tracks: ${report.similar_tracks.map((t) => `#${t.rank} ${t.title} (${t.score}%)`).join(" | ")}`);
+    }
+    log(`  ai_summary: ${report.ai_summary}`);
+
     log(`Final verdict: ${report.verdict}`);
+
+    // SEAL — persist in private registry before on-chain callback (CLEAN only).
+    if (report.verdict === "CLEAN") {
+      log(`SEAL — POST /api/registry  trackId=${input.trackId}  fingerprint=${report.submitted_track.fingerprint}`);
+      client.register({
+        trackId: input.trackId,
+        midiSequence,
+        fingerprint: report.submitted_track.fingerprint,
+      }).result();
+      log("SEAL OK — track persisted in private registry");
+    }
+
     return {
       verdict: report.verdict,
       trackId: input.trackId,
@@ -213,7 +257,7 @@ export const runPipeline = (runtime: Runtime<Config>, input: PipelineInput): Pip
 // HTTP trigger: pipeline entry point (track submission)
 // --------------------------------------------------------------------------
 const onSubmission = (runtime: Runtime<Config>, payload: HTTPPayload): PipelineResult => {
-  const input = JSON.parse(new TextDecoder().decode(payload.input)) as PipelineInput;
+  const input = parsePipelineInput(JSON.parse(new TextDecoder().decode(payload.input)));
   runtime.log(`Echo — new submission (commitment ${input.commitmentHash.slice(0, 10)}…)`);
   if (runtime.config.useConfidentialHttp) {
     runtime.log("Confidential AI — sensitive agents routed via ConfidentialHTTPClient");

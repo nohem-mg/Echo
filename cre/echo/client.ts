@@ -1,7 +1,7 @@
 // ==========================================================================
 // Echo — Pipeline client abstraction
 // --------------------------------------------------------------------------
-// Wraps the five backend steps behind an interface so the DAG logic in
+// Wraps the six backend steps behind an interface so the DAG logic in
 // main.ts can be unit-tested without any network / CRE runtime (inject a
 // fake client). The real implementation delegates to steps.ts or, when
 // useConfidentialHttp is enabled, to confidential-steps.ts (TEE agents).
@@ -17,16 +17,14 @@ import {
 } from "./confidential-backend";
 import {
   stepCheckPublicConfidential,
-  stepCompareCommercialConfidential,
-  stepComparePrivateConfidential,
   stepConvertConfidential,
-  stepReportConfidential,
 } from "./confidential-steps";
 import {
   stepCheckPublic,
   stepCompareCommercial,
   stepComparePrivate,
   stepConvert,
+  stepRegister,
   stepReport,
 } from "./steps";
 import type {
@@ -36,6 +34,7 @@ import type {
   CompareCommercialResponse,
   ComparePrivateResponse,
   ConvertResponse,
+  RegisterResponse,
   RegistryMatch,
   ReportResponse,
 } from "./types";
@@ -54,6 +53,11 @@ export type PipelineClient = {
   comparePrivate(midiSequence: string): Deferred<ComparePrivateResponse>;
   compareCommercial(midiSequence: string, ISRCs: string[]): Deferred<CompareCommercialResponse>;
   report(args: ReportArgs): Deferred<ReportResponse>;
+  register(args: {
+    trackId: string;
+    midiSequence: string;
+    fingerprint?: string;
+  }): Deferred<RegisterResponse>;
   getAgentAttestations(): readonly AgentAttestation[];
 };
 
@@ -77,15 +81,19 @@ export function createBackendClient<C>(
 
   if (confidentialCtx) {
     const ctx = confidentialCtx;
+    // Agents A/B (raw audio) → ConfidentialHTTPClient (TEE + attestation).
+    // Steps C–E + registry pass midiSequence produced inside the workflow; the
+    // confidential bodyString template cannot embed dynamic JSON safely, so
+    // they use the regular HTTP client (still node-mode + consensus).
     return {
       convert: (audioRef) => stepConvertConfidential(runtime, baseUrl, audioRef, ctx, confidentialOptions),
       checkPublic: (audioRef) =>
         stepCheckPublicConfidential(runtime, baseUrl, audioRef, ctx, confidentialOptions),
-      comparePrivate: (midiSequence) =>
-        stepComparePrivateConfidential(runtime, baseUrl, midiSequence, ctx, confidentialOptions),
+      comparePrivate: (midiSequence) => stepComparePrivate(runtime, baseUrl, midiSequence),
       compareCommercial: (midiSequence, ISRCs) =>
-        stepCompareCommercialConfidential(runtime, baseUrl, midiSequence, ISRCs, ctx, confidentialOptions),
-      report: (args) => stepReportConfidential(runtime, baseUrl, args, ctx, confidentialOptions),
+        stepCompareCommercial(runtime, baseUrl, midiSequence, ISRCs),
+      report: (args) => stepReport(runtime, baseUrl, args),
+      register: (args) => stepRegister(runtime, baseUrl, args),
       getAgentAttestations: () => ctx.collector.list(),
     };
   }
@@ -97,6 +105,7 @@ export function createBackendClient<C>(
     compareCommercial: (midiSequence, ISRCs) =>
       stepCompareCommercial(runtime, baseUrl, midiSequence, ISRCs),
     report: (args) => stepReport(runtime, baseUrl, args),
+    register: (args) => stepRegister(runtime, baseUrl, args),
     getAgentAttestations: () => [],
   };
 }
