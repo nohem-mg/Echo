@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {Registry, IReceiver} from "../src/Registry.sol";
+import {Registry} from "../src/Registry.sol";
 
 contract RegistryTest is Test {
     Registry registry;
@@ -40,24 +40,13 @@ contract RegistryTest is Test {
         registry.registerTrack(nullifier, keccak256("other"), registryRef);
     }
 
-    function test_route_wrongCaller_reverts() public {
+    function test_onReport_wrongCaller_reverts() public {
         bytes32 trackId = _register(artist);
         bytes memory report = abi.encode(trackId, uint8(2));
 
         vm.prank(hacker);
-        vm.expectRevert(Registry.InvalidForwarder.selector);
-        registry.route(bytes32(0), address(0), address(0), "", report);
-    }
-
-    function test_route_success() public {
-        bytes32 trackId = _register(artist);
-        bytes memory report = abi.encode(trackId, uint8(2));
-
-        vm.prank(cre);
-        bool ok = registry.route(bytes32(0), address(0), address(0), "", report);
-
-        assertTrue(ok);
-        assertEq(uint8(registry.getEntry(trackId).status), uint8(Registry.Status.SIMILAR));
+        vm.expectRevert("Only CRE forwarder");
+        registry.onReport("", report);
     }
 
     function test_onReport_success() public {
@@ -70,18 +59,9 @@ contract RegistryTest is Test {
         assertEq(uint8(registry.getEntry(trackId).status), uint8(Registry.Status.SIMILAR));
     }
 
-    function test_onReport_wrongCaller_reverts() public {
-        bytes32 trackId = _register(artist);
-        bytes memory report = abi.encode(trackId, uint8(2));
-
-        vm.prank(hacker);
-        vm.expectRevert(Registry.InvalidForwarder.selector);
-        registry.onReport("", report);
-    }
-
     function test_supportsInterface_receiver() public view {
-        assertTrue(registry.supportsInterface(type(IReceiver).interfaceId));
-        assertTrue(registry.supportsInterface(0x01ffc9a7));
+        bytes4 receiverInterfaceId = bytes4(keccak256("onReport(bytes,bytes)"));
+        assertTrue(registry.supportsInterface(receiverInterfaceId));
     }
 
     function test_revealTrack_byArtist_success() public {

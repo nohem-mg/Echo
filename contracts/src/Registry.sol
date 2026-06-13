@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @dev Chainlink CRE KeystoneForwarder consumer interface (IReceiver).
-interface IReceiver {
-    function onReport(bytes calldata metadata, bytes calldata report) external;
-}
-
-contract Registry is IReceiver {
+contract Registry {
 
     enum Status { SEALED, REVEALED, SIMILAR, REJECTED }
 
@@ -17,6 +12,9 @@ contract Registry is IReceiver {
         Status  status;
         bytes32 registryRef;
     }
+
+    bytes4 private constant RECEIVER_INTERFACE_ID =
+        bytes4(keccak256("onReport(bytes,bytes)"));
 
     address public immutable creAddress;
 
@@ -60,33 +58,15 @@ contract Registry is IReceiver {
         emit TrackRegistered(msg.sender, trackId, commitmentHash, block.timestamp);
     }
 
-    /// @inheritdoc IReceiver
-    /// @notice Primary CRE entry point — MockKeystoneForwarder / KeystoneForwarder call onReport().
-    function onReport(bytes calldata /* metadata */, bytes calldata report) external override {
-        if (msg.sender != creAddress) revert InvalidForwarder();
-        _applyVerdict(report);
-    }
-
-    /// @notice Legacy forwarder entry point (route API) — kept for compatibility.
-    function route(
-        bytes32 /* transmissionId */,
-        address /* transmitter */,
-        address /* receiver */,
+    function onReport(
         bytes calldata /* metadata */,
-        bytes calldata validatedReport
-    ) external returns (bool) {
-        if (msg.sender != creAddress) revert InvalidForwarder();
-        _applyVerdict(validatedReport);
-        return true;
-    }
+        bytes calldata rawReport
+    ) external {
+        require(msg.sender == creAddress, "Only CRE forwarder");
 
-    /// @dev ERC-165: MockKeystoneForwarder checks IReceiver before delivering reports.
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IReceiver).interfaceId || interfaceId == 0x01ffc9a7;
-    }
-
-    function _applyVerdict(bytes calldata payload) internal {
-        (bytes32 trackId, uint8 verdictRaw) = abi.decode(payload, (bytes32, uint8));
+        (bytes32 trackId, uint8 verdictRaw) = abi.decode(
+            rawReport, (bytes32, uint8)
+        );
 
         if (entries[trackId].timestamp == 0) revert TrackNotFound();
 
@@ -94,6 +74,12 @@ contract Registry is IReceiver {
         entries[trackId].status = verdict;
         emit StatusUpdated(trackId, verdict);
     }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == RECEIVER_INTERFACE_ID;
+    }
+
+
 
     function revealTrack(bytes32 trackId, bytes32 fullProfileHash) external {
         Entry storage entry = entries[trackId];
