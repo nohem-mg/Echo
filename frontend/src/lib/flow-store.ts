@@ -48,6 +48,33 @@ export function getPersistenceMode() {
   return "local_file";
 }
 
+export async function getPersistenceHealth() {
+  const mode = getPersistenceMode();
+
+  if (mode === "postgres") {
+    try {
+      await ensurePostgresSchema();
+      const result = await getPool().query("SELECT COUNT(*)::int AS count FROM echo_flows");
+      return {
+        ok: true,
+        mode,
+        flowCount: Number(result.rows[0]?.count ?? 0),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        mode,
+        error: toSafeErrorMessage(error),
+      };
+    }
+  }
+
+  return {
+    ok: mode === "local_file",
+    mode,
+  };
+}
+
 export async function createOrReuseFlow(input: CreateFlowInput) {
   validateFlowInput(input);
 
@@ -234,6 +261,17 @@ export class FlowStoreError extends Error {
   ) {
     super(message);
   }
+}
+
+export function toSafeErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const databaseUrl = process.env.DATABASE_URL;
+
+  if (!databaseUrl) {
+    return message;
+  }
+
+  return message.replaceAll(databaseUrl, "[DATABASE_URL]");
 }
 
 function getPool() {

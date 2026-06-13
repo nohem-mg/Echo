@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { IDKitResult } from "@worldcoin/idkit-core";
-import { createOrReuseFlow, FlowStoreError } from "@/lib/flow-store";
+import { createOrReuseFlow, FlowStoreError, toSafeErrorMessage } from "@/lib/flow-store";
 import { mockWorldEnabled } from "@/lib/server-env";
 
 type VerifyRequest = {
@@ -118,6 +118,13 @@ async function createFlowOrResponse({
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
 
-    throw error;
+    console.error("Echo flow persistence failed", error);
+    return NextResponse.json(
+      {
+        error: "Flow persistence failed",
+        details: toSafeErrorMessage(error),
+      },
+      { status: 500 },
+    );
   }
 }
