@@ -49,11 +49,14 @@ class InvalidAudioError(DomainError):
     code = "invalid_audio"
 
 
-class InferenceError(DomainError):
-    """Model inference failure — the CRE treats this as STOP fail-fast."""
+class UpstreamError(DomainError):
+    """A required upstream dependency (external API) failed or timed out.
 
-    status_code = 500
-    code = "inference_error"
+    The CRE treats this as STOP fail-fast: no partial state is written on-chain.
+    """
+
+    status_code = 502
+    code = "upstream_error"
 
 
 def _request_id(request: Request) -> str | None:

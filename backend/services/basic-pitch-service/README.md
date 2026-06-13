@@ -55,9 +55,9 @@ service as the pipeline grows.
 ## Calling the API
 
 ```bash
-# Audio -> MIDI conversion (fixtures provided under tests/resources/)
-curl -F file=@tests/resources/arpeggio.wav http://localhost:8001/convert
-curl -F file=@tests/resources/arpeggio.mp3 http://localhost:8001/convert
+# Audio -> MIDI conversion (shared fixtures under backend/fixtures/audio/)
+curl -F file=@../../fixtures/audio/arpeggio.wav http://localhost:8001/convert
+curl -F file=@../../fixtures/audio/arpeggio.mp3 http://localhost:8001/convert
 
 curl http://localhost:8001/health     # liveness
 open http://localhost:8001/docs        # interactive OpenAPI / Swagger docs
@@ -72,6 +72,7 @@ the API (that's Docker's job). From this directory:
 # Python 3.11 REQUIRED (see note below)
 /opt/homebrew/opt/python@3.11/bin/python3.11 -m venv .venv311
 source .venv311/bin/activate          # prompt shows "(.venv311)"
+pip install -e ../../packages/echo-common   # shared package first
 pip install -e ".[dev]"               # basic-pitch + deps (~2-4 min)
 
 pytest                                # 8 tests: 6 unit (model mocked) + 2 integration WAV/MP3

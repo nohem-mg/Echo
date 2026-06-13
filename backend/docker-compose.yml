@@ -1,4 +1,8 @@
 # Echo backend — service orchestrator.
+# Build context is this directory (backend/) so each image can pull in the shared
+# echo-common package alongside its own service. One block per microservice; the
+# CRE reaches them by service name on the internal network
+# (e.g. http://basic-pitch-service:8001, http://acrcloud-service:8002).
 #
 # Quick start (Nohem / CRE):
 #   1. docker compose up --build          # BasicPitch on :8001
@@ -9,10 +13,23 @@
 # CRE config already points to http://127.0.0.1:8080 (cre/echo/config.staging.json).
 services:
   basic-pitch-service:
-    build: ./services/basic-pitch-service
-    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: services/basic-pitch-service/Dockerfile
     ports:
       - "8001:8001"
     env_file:
-      - ./services/basic-pitch-service/.env.example
+      - path: ./services/basic-pitch-service/.env
+        required: false
+    restart: unless-stopped
+
+  acrcloud-service:
+    build:
+      context: .
+      dockerfile: services/acrcloud-service/Dockerfile
+    ports:
+      - "8002:8002"
+    env_file:
+      - path: ./services/acrcloud-service/.env
+        required: false
     restart: unless-stopped

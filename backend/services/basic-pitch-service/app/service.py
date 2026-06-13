@@ -8,12 +8,21 @@ from __future__ import annotations
 from functools import cached_property
 from pathlib import Path
 
+from echo_common.errors import DomainError
+from echo_common.log import get_logger
+from echo_common.schemas.midi import MidiSequence, NoteEvent
+
 from .config import Settings
-from .core.errors import InferenceError
-from .core.log import get_logger
-from .schemas.midi import MidiSequence, ModelInfo, NoteEvent
+from .schemas import ModelInfo
 
 logger = get_logger(__name__)
+
+
+class InferenceError(DomainError):
+    """Model inference failure — the CRE treats this as STOP fail-fast."""
+
+    status_code = 500
+    code = "inference_error"
 
 
 def _amplitude_to_velocity(amplitude: float) -> int:

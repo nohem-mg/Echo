@@ -1,4 +1,4 @@
-"""FastAPI entry point for the basic-pitch-service (Echo, Step 1)."""
+"""FastAPI entry point for the acrcloud-service (Echo, Step 2A)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from .config import settings
 from .routes import router
-from .service import BasicPitchService
+from .service import AcrCloudService
 
 logger = get_logger(__name__)
 
@@ -18,16 +18,16 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging(settings.log_level)
-    service = BasicPitchService(settings)
-    service.warmup()  # load the model once, not per request
-    app.state.service = service
-    logger.info("basic-pitch-service ready")
+    app.state.service = AcrCloudService(settings)
+    if not settings.host:
+        logger.warning("ACRCloud credentials not set — /check/public will 502")
+    logger.info("acrcloud-service ready")
     yield
 
 
 app = create_app(
-    title="Echo — basic-pitch-service",
-    description="Pipeline Step 1: raw audio -> MIDI conversion.",
+    title="Echo — acrcloud-service",
+    description="Pipeline Step 2A: acoustic fingerprint vs ACRCloud public database.",
     router=router,
     lifespan=lifespan,
 )

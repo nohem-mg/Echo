@@ -1,0 +1,17 @@
+[project]
+name = "echo-common"
+version = "0.1.0"
+description = "Echo — shared contracts and cross-cutting utilities for the pipeline microservices."
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "pydantic>=2.6",
+    "python-multipart>=0.0.9",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["echo_common*"]

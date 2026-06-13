@@ -38,9 +38,9 @@ cre/.cre/
 *.mp3
 *.mid
 *.midi
-# ... except versioned test fixtures
-!**/tests/resources/*.wav
-!**/tests/resources/*.mp3
+# ... except the small generated test fixture (large/real audio stays local)
+!backend/fixtures/audio/arpeggio.wav
+!backend/fixtures/audio/arpeggio.mp3
 tmp/
 uploads/
 frontend/.data/

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from echo_common import audio
+from echo_common.log import get_logger
 from fastapi import APIRouter, File, Request, UploadFile
 
 from .config import settings
-from .core import audio
-from .core.log import get_logger
-from .schemas.midi import ConvertResponse
+from .schemas import ConvertResponse
 from .service import BasicPitchService
 
 logger = get_logger(__name__)
@@ -16,11 +16,6 @@ router = APIRouter()
 
 def _service(request: Request) -> BasicPitchService:
     return request.app.state.service
-
-
-@router.get("/health", tags=["meta"])
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
 
 
 @router.post("/convert", response_model=ConvertResponse, tags=["pipeline"])
