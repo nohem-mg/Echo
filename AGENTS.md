@@ -31,7 +31,7 @@
 ## Network
 
 - Chain: Ethereum Sepolia (chain ID 11155111)
-- Registry contract: `0x52eE9af7918c69Ab4DC08b9C0b2a82C24Fd6DC6C`
+- Registry contract: `0xd2A1ec2a6Ef3973A1519E9aaf0A77c01955E0f72`
 - ABI: `contracts/out/Registry.sol/Registry.json`
 
 ---
@@ -79,13 +79,13 @@
 
 ### Backend → CRE
 
-| Endpoint | Input | Output |
-|---|---|---|
-| `POST /api/convert` | `{ audioFile }` | `{ midiSequence }` |
-| `POST /api/check/public` | `{ audioFile }` | `{ matches: [{ ISRC, confidence_score }] }` |
-| `POST /api/compare/private` | `{ midiSequence }` | `{ registry_matches: [{ track_id, similarity_score }] }` |
-| `POST /api/compare/commercial` | `{ midiSequence, ISRCs[] }` | `{ commercial_deltas: [{ ISRC, melodic, rhythmic, structural }] }` |
-| `POST /api/report` | `{ audioFile, midiSequence, registry_matches, commercial_deltas }` | `{ verdict, submitted_track, similar_tracks[], ai_summary }` |
+| Endpoint                       | Input                                                              | Output                                                             |
+| --------------------------------| --------------------------------------------------------------------| --------------------------------------------------------------------|
+| `POST /api/convert`            | `{ audioFile }`                                                    | `{ midiSequence }`                                                 |
+| `POST /api/check/public`       | `{ audioFile }`                                                    | `{ matches: [{ ISRC, confidence_score }] }`                        |
+| `POST /api/compare/private`    | `{ midiSequence }`                                                 | `{ registry_matches: [{ track_id, similarity_score }] }`           |
+| `POST /api/compare/commercial` | `{ midiSequence, ISRCs[] }`                                        | `{ commercial_deltas: [{ ISRC, melodic, rhythmic, structural }] }` |
+| `POST /api/report`             | `{ audioFile, midiSequence, registry_matches, commercial_deltas }` | `{ verdict, submitted_track, similar_tracks[], ai_summary }`       |
 
 ### CRE → Contract
 
