@@ -1,17 +1,17 @@
 # basic-pitch-service (Echo — Step 1)
 
-Microservice de **conversion audio brut → MIDI** via [Spotify BasicPitch](https://github.com/spotify/basic-pitch).
-Premier maillon du DAG fail-fast : il **convertit, il n'analyse pas** (clé/BPM/empreinte
-viennent de l'audio brut en Step 4 ; la similarité MIDI est un service séparé).
+Microservice for **raw audio → MIDI** conversion via [Spotify BasicPitch](https://github.com/spotify/basic-pitch).
+First link in the fail-fast DAG: it **converts, it does not analyze** (key/BPM/fingerprint
+come from raw audio in Step 4; MIDI similarity is a separate service).
 
 ## API
 
 ### `POST /convert`
-- **Entrée** : `multipart/form-data`, champ `file`.
-- **Formats** : `wav` (recommandé, lossless → meilleure transcription), `mp3`, `flac`, `ogg`, `m4a`.
-  L'audio est downmixé mono + resamplé à 22 050 Hz par BasicPitch (non configurable, Step 1 = conversion).
-- **Bornes** : ≤ 50 MB, ≤ 10 min (configurable). Rejet **avant** inférence.
-- **Sortie `200`** :
+- **Input**: `multipart/form-data`, `file` field.
+- **Formats**: `wav` (recommended, lossless → better transcription), `mp3`, `flac`, `ogg`, `m4a`.
+  Audio is downmixed to mono and resampled to 22 050 Hz by BasicPitch (not configurable).
+- **Bounds**: ≤ 50 MB, ≤ 10 min (configurable). Rejected **before** inference.
+- **`200` response**:
   ```json
   {
     "midi_sequence": {
@@ -24,97 +24,80 @@ viennent de l'audio brut en Step 4 ; la similarité MIDI est un service séparé
     "request_id": "uuid"
   }
   ```
-- **Erreurs** (enveloppe uniforme `{code, message, request_id, details?}`) :
+- **Errors** (uniform envelope `{code, message, request_id, details?}`):
 
-  | Code | `code` | Cas |
+  | HTTP | `code` | Case |
   |---|---|---|
-  | 415 | `unsupported_media_type` | extension non whitelistée |
-  | 413 | `payload_too_large` | fichier > limite |
-  | 422 | `invalid_audio` / `validation_error` | audio vide/corrompu, durée hors borne, requête malformée |
-  | 500 | `inference_error` | échec modèle → le CRE traite ça comme **STOP fail-fast** |
+  | 415 | `unsupported_media_type` | extension not whitelisted |
+  | 413 | `payload_too_large` | file over the limit |
+  | 422 | `invalid_audio` / `validation_error` | empty/corrupt audio, out-of-bounds duration, malformed request |
+  | 500 | `inference_error` | model failure → the CRE treats it as **STOP fail-fast** |
 
 ### `GET /health`
-Liveness simple (`{"status": "ok"}`).
+Simple liveness (`{"status": "ok"}`).
 
-## Lancer en local
+## Run the service (Docker — canonical)
 
-Toutes les commandes se lancent **depuis ce dossier** (`backend/services/basic-pitch-service`),
-et `pip`/`pytest`/`uvicorn` **n'existent que dans le venv** : tant que tu n'as pas fait
-`source .venv311/bin/activate`, tu auras `command not found`.
-
-```bash
-cd ~/repos/Echo/backend/services/basic-pitch-service
-
-# 1. Créer le venv (Python 3.11 obligatoire — voir note ci-dessous)
-/opt/homebrew/opt/python@3.11/bin/python3.11 -m venv .venv311
-
-# 2. L'activer (le prompt affiche alors « (.venv311) » au début)
-source .venv311/bin/activate
-
-# 3. Installer le service + ses deps (basic-pitch + runtime ML, ~2-4 min)
-pip install -e ".[dev]"
-
-# 4. Lancer le serveur
-uvicorn app.main:app --reload --port 8001
-```
-
-> **Note** : à chaque nouveau terminal, ré-active le venv (`source .venv311/bin/activate`)
-> avant `pytest`/`uvicorn`. Pour quitter le venv : `deactivate`.
-
-## Lancer via Docker (iso-prod, sans venv)
-
-Pas besoin de Python 3.11 ni de venv : l'image épingle déjà tout. Depuis `backend/` :
+This is **the** way to run the API. The image pins the whole stack (Python 3.11, ML
+runtime, ffmpeg) → nothing to install on your machine. From `backend/`:
 
 ```bash
-docker compose up --build basic-pitch-service   # build + démarre, port 8001 exposé
+docker compose up --build basic-pitch-service   # build + start, port 8001 exposed
 ```
 
-C'est ce point d'orchestration (`backend/docker-compose.yml`) qui accueillera les
-prochains services — un bloc par service.
+The API listens on `http://localhost:8001` — this is also what the CRE and other
+services hit. `backend/docker-compose.yml` is the orchestration point: one block per
+service as the pipeline grows.
 
-> Image seule, sans compose :
+> Image only, without compose:
 > `docker build -t echo/basic-pitch . && docker run -p 8001:8001 echo/basic-pitch`
 
-## Faire des appels
-
-Quel que soit le mode de lancement (venv ou Docker), l'API écoute sur le port 8001 :
+## Calling the API
 
 ```bash
-# Conversion audio -> MIDI (fixtures fournies dans tests/resources/)
+# Audio -> MIDI conversion (fixtures provided under tests/resources/)
 curl -F file=@tests/resources/arpeggio.wav http://localhost:8001/convert
 curl -F file=@tests/resources/arpeggio.mp3 http://localhost:8001/convert
 
 curl http://localhost:8001/health     # liveness
-open http://localhost:8001/docs        # doc interactive OpenAPI / Swagger
+open http://localhost:8001/docs        # interactive OpenAPI / Swagger docs
 ```
 
-> **Python 3.11 obligatoire.** basic-pitch 0.4.0 exige `tensorflow-macos<2.15.1` sur
-> Darwin py>3.11 (wheels inexistants → 3.12/3.13/3.14 cassés sur Mac), et la stack ML
-> ne supporte pas encore 3.13+. Sur Mac, basic-pitch s'installe avec le backend **CoreML**
-> (pas de TensorFlow). Le `Dockerfile` épingle 3.11. NB : `setuptools<81` est épinglé car
-> `resampy<0.4.3` (transitif) importe `pkg_resources`, retiré de setuptools 81+.
+## Development & tests (local venv)
 
-## Tests
-
-Venv activé (cf. ci-dessus) :
+The venv is **dev-only**: hot-reload iteration and fast `pytest`. Not required to serve
+the API (that's Docker's job). From this directory:
 
 ```bash
-pytest                # 8 tests : 6 unitaires (modèle mocké) + 2 intégration WAV/MP3 (vrai BasicPitch)
+# Python 3.11 REQUIRED (see note below)
+/opt/homebrew/opt/python@3.11/bin/python3.11 -m venv .venv311
+source .venv311/bin/activate          # prompt shows "(.venv311)"
+pip install -e ".[dev]"               # basic-pitch + deps (~2-4 min)
+
+pytest                                # 8 tests: 6 unit (model mocked) + 2 integration WAV/MP3
+uvicorn app.main:app --reload --port 8001   # hot-reload dev server
 ```
 
-Le test d'intégration se skippe tout seul si basic-pitch n'est pas installé.
+`pip`/`pytest`/`uvicorn` only exist inside the venv: re-activate it (`source …/activate`)
+in each new terminal. The integration test self-skips if basic-pitch is absent.
 
-## Architecture interne
+> **Python 3.11 required.** basic-pitch 0.4.0 requires `tensorflow-macos<2.15.1` on
+> Darwin py>3.11 (no wheels → 3.12/3.13/3.14 broken on Mac), and the ML stack does not
+> support 3.13+ yet. On Mac, basic-pitch uses the **CoreML** backend. `setuptools<81` is
+> pinned because `resampy<0.4.3` (transitive) imports `pkg_resources`, removed in
+> setuptools 81+. (The `Dockerfile` already handles all this — hence Docker as default.)
+
+## Internal architecture
 
 ```
 app/
-├── main.py        création FastAPI, lifespan (charge le modèle 1×), middleware request_id
-├── config.py      Settings (env ECHO_BP_*)
-├── routes.py      couche transport : valide + délègue, zéro logique métier
-├── service.py     wrap BasicPitch.predict (cœur testable, indépendant de HTTP)
-├── schemas/midi.py  contrat de sortie (MidiSequence/NoteEvent) — stable pour l'aval
-└── core/          errors (enveloppe uniforme) · log (JSON, jamais de contenu) · audio (validation)
+├── main.py        FastAPI app, lifespan (loads the model once), request_id middleware
+├── config.py      Settings (ECHO_BP_* env vars)
+├── routes.py      transport layer: validate + delegate, no business logic
+├── service.py     BasicPitch.predict wrapper (testable core, HTTP-independent)
+├── schemas/midi.py  output contract (MidiSequence/NoteEvent) — stable for downstream
+└── core/          errors (uniform envelope) · log (JSON, never content) · audio (validation)
 ```
 
-Quand un 2e service rejoindra le backend, les pièces transverses de `core/` et le
-contrat `schemas/midi.py` seront extraits dans un package partagé `echo-common`.
+When a 2nd service joins the backend, the cross-cutting pieces in `core/` and the
+`schemas/midi.py` contract will be extracted into a shared `echo-common` package.

@@ -38,7 +38,7 @@ cre/.cre/
 *.mp3
 *.mid
 *.midi
-# ... sauf les fixtures de test versionnées
+# ... except versioned test fixtures
 !**/tests/resources/*.wav
 !**/tests/resources/*.mp3
 tmp/
