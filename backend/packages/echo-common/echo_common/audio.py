@@ -1,8 +1,9 @@
 """Safe validation and materialization of incoming audio.
 
-BasicPitch (via librosa) reads a *file path*, not a stream. So we stream the
-upload to a temp file with a size cap, then probe the duration BEFORE any
-inference (don't burn CPU on a 2h file).
+Shared by every service that ingests an audio upload (basic-pitch, acrcloud, ...).
+We stream the upload to a temp file with a size cap, then probe the duration
+BEFORE any heavy work. ``librosa`` is imported lazily so services that only need
+extension/size checks don't pay for it.
 """
 
 from __future__ import annotations

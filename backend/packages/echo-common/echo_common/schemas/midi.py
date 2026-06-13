@@ -1,7 +1,8 @@
-"""Step 1 output contract — the MIDI representation consumed by downstream steps.
+"""Shared MIDI contract.
 
-Deliberately decoupled from any BasicPitch/pretty_midi object. This is the stable
-format the CRE transports and that Step 2B (similarity) will consume.
+Produced by basic-pitch-service (Step 1), consumed by midi-similarity-service
+(Step 2B). Lives here so both sides import the exact same Pydantic types and the
+schema can never drift between producer and consumer.
 """
 
 from __future__ import annotations
@@ -29,19 +30,8 @@ class MidiSequence(BaseModel):
     notes: list[NoteEvent]
     duration_s: float = Field(..., ge=0, description="Span covered by the notes.")
     n_notes: int = Field(..., ge=0)
-    # BasicPitch CONVERTS, it does not analyze: tempo/key stay out of this service.
+    # BasicPitch CONVERTS, it does not analyze: tempo/key stay out of Step 1.
     tempo_bpm_estimate: None = Field(
         default=None,
         description="Always null in Step 1; key/BPM come from raw audio (Step 4).",
     )
-
-
-class ModelInfo(BaseModel):
-    backend: str = Field(..., description="Resolved inference runtime (coreml/tf/...).")
-    version: str = Field(..., description="basic-pitch package version.")
-
-
-class ConvertResponse(BaseModel):
-    midi_sequence: MidiSequence
-    model: ModelInfo
-    request_id: str
