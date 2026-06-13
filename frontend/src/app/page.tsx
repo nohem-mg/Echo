@@ -495,7 +495,8 @@ export default function Home() {
       });
 
       if (!verifyResponse.ok) {
-        throw new Error("Backend rejected World ID proof");
+        const errorBody = await verifyResponse.json().catch(() => null);
+        throw new Error(formatApiError(errorBody, "Backend rejected World ID proof"));
       }
 
       const verified = (await verifyResponse.json()) as { nullifier?: string; mode?: "world" | "mock"; flow?: EchoFlow };
@@ -892,6 +893,24 @@ export default function Home() {
       </nav>
     </main>
   );
+}
+
+function formatApiError(body: unknown, fallback: string) {
+  if (!body || typeof body !== "object") {
+    return fallback;
+  }
+
+  const apiError = body as { error?: string; details?: unknown };
+
+  if (typeof apiError.details === "string") {
+    return `${apiError.error ?? fallback}: ${apiError.details}`;
+  }
+
+  if (apiError.details && typeof apiError.details === "object") {
+    return `${apiError.error ?? fallback}: ${JSON.stringify(apiError.details)}`;
+  }
+
+  return apiError.error ?? fallback;
 }
 
 function WorldIdQrModal({

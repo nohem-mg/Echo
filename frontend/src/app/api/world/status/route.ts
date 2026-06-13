@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPersistenceMode } from "@/lib/flow-store";
+import { getPersistenceHealth, getPersistenceMode } from "@/lib/flow-store";
 import { mockWorldEnabled } from "@/lib/server-env";
 
 const REQUIRED = [
@@ -16,14 +16,16 @@ export async function GET(): Promise<Response> {
   const feeReceiver = process.env.NEXT_PUBLIC_FEE_RECEIVER_ADDRESS ?? process.env.PAYMENT_RECEIVER_ADDRESS;
   const missing = [...REQUIRED.filter((name) => !process.env[name]), ...(feeReceiver ? [] : ["NEXT_PUBLIC_FEE_RECEIVER_ADDRESS"])];
   const persistenceMode = getPersistenceMode();
+  const persistence = await getPersistenceHealth();
   const missingOptional = OPTIONAL.filter((name) => !process.env[name]);
 
   return NextResponse.json({
-    ready: missing.length === 0 && persistenceMode !== "missing_database_url",
+    ready: missing.length === 0 && persistence.ok,
     mockWorldEnabled: mockWorldEnabled(),
     missing,
     missingOptional,
     persistenceMode,
+    persistence,
     environment: process.env.NEXT_PUBLIC_WORLD_ENVIRONMENT ?? "staging",
     chainId: Number(process.env.NEXT_PUBLIC_REGISTRY_CHAIN_ID ?? "11155111"),
     feeEth: process.env.NEXT_PUBLIC_FLOW_FEE_ETH ?? "0.001",
