@@ -188,8 +188,9 @@ Bun.serve({
         try {
           return json(await proxyCheckPublic(audioFile));
         } catch (err) {
-          console.error("[gateway] acrcloud error:", err);
-          return json({ code: "upstream_error", message: String(err) }, 502);
+          // Service is up but returned an error (e.g. missing credentials) — fall back to mock.
+          console.warn("[gateway] acrcloud proxy failed, falling back to mock:", String(err));
+          return json(mockCheckPublic(audioFile));
         }
       }
       return json(mockCheckPublic(audioFile));
