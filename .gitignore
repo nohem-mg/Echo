@@ -27,6 +27,7 @@ contracts/broadcast/
 
 # CRE
 cre/.cre/
+.cre_build_tmp.js
 
 # Audio / MIDI artifacts (temp pipeline)
 *.wav
