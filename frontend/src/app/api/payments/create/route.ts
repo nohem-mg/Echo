@@ -1,24 +1,24 @@
 import { NextResponse } from "next/server";
-import { mockWorldEnabled } from "@/lib/server-env";
+import { isAddress } from "viem";
 
 const DEFAULT_RECEIVER = "0x0000000000000000000000000000000000000000";
+const SEPOLIA_CHAIN_ID = 11155111;
 
 export async function POST(): Promise<Response> {
-  const receiver = process.env.PAYMENT_RECEIVER_ADDRESS ?? "";
-  const amount = Number(process.env.NEXT_PUBLIC_PAYMENT_AMOUNT_WLD ?? "0.1");
-  const description = process.env.NEXT_PUBLIC_PAYMENT_DESCRIPTION ?? "Echo prior-art seal";
-  const isMock = mockWorldEnabled();
+  const receiver = process.env.NEXT_PUBLIC_FEE_RECEIVER_ADDRESS ?? process.env.PAYMENT_RECEIVER_ADDRESS ?? "";
+  const amountEth = process.env.NEXT_PUBLIC_FLOW_FEE_ETH ?? "0.001";
+  const description = process.env.NEXT_PUBLIC_PAYMENT_DESCRIPTION ?? "Echo Sepolia prior-art fee";
 
-  if (!isMock && (!receiver || receiver === DEFAULT_RECEIVER)) {
-    return NextResponse.json({ error: "Missing PAYMENT_RECEIVER_ADDRESS" }, { status: 500 });
+  if (!receiver || receiver === DEFAULT_RECEIVER || !isAddress(receiver)) {
+    return NextResponse.json({ error: "Missing NEXT_PUBLIC_FEE_RECEIVER_ADDRESS" }, { status: 500 });
   }
 
   return NextResponse.json({
     reference: `echo-${crypto.randomUUID()}`,
-    to: isMock && !receiver ? DEFAULT_RECEIVER : receiver,
-    amount,
-    token: "WLD",
+    receiver,
+    amountEth,
+    token: "ETH",
     description,
-    mode: isMock ? "mock" : "world",
+    chainId: SEPOLIA_CHAIN_ID,
   });
 }

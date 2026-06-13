@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { IDKit, orbLegacy, type IDKitResult } from "@worldcoin/idkit-core";
-import { MiniKit } from "@worldcoin/minikit-js";
-import { Tokens, tokenToDecimals } from "@worldcoin/minikit-js/commands";
+import Image from "next/image";
+import QRCode from "qrcode";
 import {
   ArrowUpRight,
   Check,
@@ -16,17 +17,27 @@ import {
   LockKeyhole,
   Pause,
   Play,
+  QrCode as QrCodeIcon,
   Radio,
   ShieldCheck,
   Sparkles,
   Upload,
   WalletCards,
   Waves,
+  X,
 } from "lucide-react";
+import { isAddress, parseEther, toHex } from "viem";
+import { useAccount, useChainId, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt } from "wagmi";
+import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
 import type { EchoPayment, PaymentCreateResponse, WorldVerification } from "@/lib/types";
 
 type StepState = "idle" | "active" | "done" | "blocked";
+
+type WorldQrState = {
+  connectorURI: string;
+  imageDataUrl: string;
+};
 
 const pipelineSteps = [
   {
@@ -94,7 +105,7 @@ const matches = [
   },
 ];
 
-const sponsors = ["World ID", "World App Pay", "Chainlink CRE", "Confidential AI", "Unlink", "Walrus", "Base Sepolia"];
+const sponsors = ["World ID", "RainbowKit", "ETH Sepolia", "Chainlink CRE", "Confidential AI", "Unlink", "Walrus"];
 
 function getStepState(index: number, hasFile: boolean, pipelineStarted: boolean): StepState {
   if (!hasFile || !pipelineStarted) {
@@ -164,10 +175,29 @@ function getProofNullifier(result: IDKitResult) {
 export default function Home() {
   const [audioName, setAudioName] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isWorldApp, setIsWorldApp] = useState(false);
   const [verification, setVerification] = useState<WorldVerification>({ status: "idle" });
   const [payment, setPayment] = useState<EchoPayment>({ status: "idle" });
+  const [pendingQuote, setPendingQuote] = useState<PaymentCreateResponse | null>(null);
   const [pipelineStarted, setPipelineStarted] = useState(false);
+  const [worldQr, setWorldQr] = useState<WorldQrState | null>(null);
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
+  const { sendTransactionAsync, isPending: isSendingTransaction } = useSendTransaction();
+
+  const pendingPaymentHash = payment.status === "pending" ? payment.hash : undefined;
+  const pendingPaymentReference = payment.status === "pending" ? payment.reference : undefined;
+  const {
+    data: paymentReceipt,
+    error: paymentReceiptError,
+    isLoading: isConfirmingTransaction,
+  } = useWaitForTransactionReceipt({
+    hash: pendingPaymentHash,
+    chainId: sepolia.id,
+    query: {
+      enabled: Boolean(pendingPaymentHash),
+    },
+  });
 
   const selectedLabel = useMemo(() => {
     if (audioName) {
@@ -177,17 +207,30 @@ export default function Home() {
     return "Drop WAV / MP3";
   }, [audioName]);
 
-  const canPay = Boolean(audioName && verification.status === "verified" && payment.status !== "pending");
+  const canVerify = Boolean(audioName && verification.status !== "pending");
+  const canPay = Boolean(audioName && verification.status === "verified" && isConnected && payment.status !== "pending" && payment.status !== "paid");
   const flowStatus = useMemo(() => {
     if (payment.status === "paid") {
-      return `Paid ${payment.mode === "mock" ? "demo" : "via World App"} · ${payment.reference.slice(0, 13)}...`;
+      return `Sepolia fee paid · ${payment.hash.slice(0, 12)}...`;
     }
 
     if (payment.status === "pending") {
-      return "Waiting for World App payment confirmation";
+      if (payment.hash) {
+        return `Waiting for Sepolia confirmation · ${payment.hash.slice(0, 12)}...`;
+      }
+
+      return "Waiting for wallet signature";
     }
 
     if (verification.status === "verified") {
+      if (!isConnected) {
+        return "World ID verified. Connect an EVM wallet to pay the Sepolia fee.";
+      }
+
+      if (chainId !== sepolia.id) {
+        return "World ID verified. Switch your wallet to Ethereum Sepolia.";
+      }
+
       return `World ID verified ${verification.mode === "mock" ? "in demo mode" : "with proof"}`;
     }
 
@@ -204,20 +247,111 @@ export default function Home() {
     }
 
     return echoConfig.mockWorldEnabled ? "Demo mode enabled" : "World Developer Portal credentials required";
-  }, [audioName, payment, verification]);
+  }, [audioName, chainId, isConnected, payment, verification]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setIsWorldApp(MiniKit.isInstalled());
-    }, 0);
+    if (payment.status !== "pending" || !paymentReceiptError) {
+      return;
+    }
 
-    return () => window.clearTimeout(timer);
-  }, []);
+    const receiptErrorMessage = paymentReceiptError.message;
+    let cancelled = false;
+
+    async function markReceiptError() {
+      await Promise.resolve();
+
+      if (cancelled) {
+        return;
+      }
+
+      setPayment({
+        status: "error",
+        error: receiptErrorMessage,
+        reference: payment.reference,
+        hash: payment.hash,
+      });
+    }
+
+    markReceiptError();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [payment.hash, payment.reference, payment.status, paymentReceiptError]);
+
+  useEffect(() => {
+    if (!paymentReceipt || !pendingQuote || !pendingPaymentHash || !pendingPaymentReference || payment.status !== "pending") {
+      return;
+    }
+
+    const txHash = pendingPaymentHash;
+    const paymentReference = pendingPaymentReference;
+    const quoteReference = pendingQuote.reference;
+    const receiptBlockNumber = paymentReceipt.blockNumber.toString();
+    let cancelled = false;
+
+    async function confirmPayment() {
+      try {
+        const confirmResponse = await fetch("/api/payments/confirm", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            hash: txHash,
+            reference: paymentReference,
+            expectedFrom: address,
+          }),
+        });
+
+        if (!confirmResponse.ok) {
+          throw new Error("Sepolia payment was not confirmed");
+        }
+
+        const confirmed = (await confirmResponse.json()) as {
+          transaction?: {
+            blockNumber?: string;
+          };
+        };
+
+        if (cancelled) {
+          return;
+        }
+
+        setPayment({
+          status: "paid",
+          reference: quoteReference,
+          hash: txHash,
+          mode: "evm",
+          blockNumber: confirmed.transaction?.blockNumber ?? receiptBlockNumber,
+        });
+        setPipelineStarted(true);
+        setPendingQuote(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setPayment({
+          status: "error",
+          error: error instanceof Error ? error.message : "Sepolia payment confirmation failed",
+          reference: paymentReference,
+          hash: txHash,
+        });
+      }
+    }
+
+    confirmPayment();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [address, payment.status, paymentReceipt, pendingPaymentHash, pendingPaymentReference, pendingQuote]);
 
   function handleAudioSelect(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     setAudioName(file?.name ?? "");
     setPipelineStarted(false);
+    setPayment({ status: "idle" });
+    setPendingQuote(null);
   }
 
   async function handleVerifyWorld() {
@@ -275,8 +409,20 @@ export default function Home() {
         environment: echoConfig.worldEnvironment,
       }).preset(orbLegacy({ signal: audioName || "echo-track" }));
 
-      if (request.connectorURI && !isWorldApp) {
-        window.open(request.connectorURI, "_blank", "noopener,noreferrer");
+      if (request.connectorURI) {
+        const imageDataUrl = await QRCode.toDataURL(request.connectorURI, {
+          width: 360,
+          margin: 2,
+          color: {
+            dark: "#050505",
+            light: "#fff7cf",
+          },
+        });
+
+        setWorldQr({
+          connectorURI: request.connectorURI,
+          imageDataUrl,
+        });
       }
 
       const proofResult = await request.pollUntilCompletion({ timeout: 180_000 });
@@ -303,7 +449,9 @@ export default function Home() {
         nullifier: verified.nullifier ?? getProofNullifier(proofResult.result),
         mode: verified.mode ?? "world",
       });
+      setWorldQr(null);
     } catch (error) {
+      setWorldQr(null);
       setVerification({
         status: "error",
         error: error instanceof Error ? error.message : "World ID verification failed",
@@ -312,68 +460,48 @@ export default function Home() {
   }
 
   async function handlePayAndStart() {
-    if (!canPay) {
+    if (!audioName || verification.status !== "verified" || payment.status === "pending" || payment.status === "paid") {
       return;
     }
 
-    setPayment({ status: "pending" });
+    if (!isConnected) {
+      setPayment({ status: "error", error: "Connect an EVM wallet before paying the Sepolia fee" });
+      return;
+    }
+
+    if (chainId !== sepolia.id) {
+      switchChain({ chainId: sepolia.id });
+      return;
+    }
 
     try {
       const paymentRequest = (await fetch("/api/payments/create", { method: "POST" }).then((response) => {
         if (!response.ok) {
-          throw new Error("Could not create payment reference");
+          throw new Error("Could not create Sepolia payment request");
         }
 
         return response.json();
       })) as PaymentCreateResponse;
 
-      const fallbackPayment = {
-        transactionId: `mock-${crypto.randomUUID()}`,
-        reference: paymentRequest.reference,
-        from: "0x0000000000000000000000000000000000000000",
-        chain: "worldchain",
-        timestamp: new Date().toISOString(),
-      };
-
-      const result =
-        paymentRequest.mode === "mock"
-          ? { executedWith: "fallback", data: fallbackPayment }
-          : await MiniKit.pay<typeof fallbackPayment>({
-              reference: paymentRequest.reference,
-              to: paymentRequest.to,
-              tokens: [
-                {
-                  symbol: Tokens.WLD,
-                  token_amount: tokenToDecimals(paymentRequest.amount, Tokens.WLD).toString(),
-                },
-              ],
-              description: paymentRequest.description,
-              fallback: () => fallbackPayment,
-            });
-
-      const confirmResponse = await fetch("/api/payments/confirm", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ payload: result.data }),
-      });
-
-      if (!confirmResponse.ok) {
-        throw new Error("Payment was not confirmed");
+      if (!isAddress(paymentRequest.receiver)) {
+        throw new Error("Invalid Sepolia fee receiver");
       }
 
-      const confirmed = (await confirmResponse.json()) as { mode?: "world" | "mock" };
+      setPendingQuote(paymentRequest);
+      setPayment({ status: "pending", reference: paymentRequest.reference });
 
-      setPayment({
-        status: "paid",
-        reference: paymentRequest.reference,
-        transactionId: result.data.transactionId,
-        mode: confirmed.mode ?? (result.executedWith === "minikit" ? "world" : "mock"),
+      const hash = await sendTransactionAsync({
+        to: paymentRequest.receiver,
+        value: parseEther(paymentRequest.amountEth),
+        data: toHex(paymentRequest.reference),
+        chainId: paymentRequest.chainId,
       });
-      setPipelineStarted(true);
+
+      setPayment({ status: "pending", reference: paymentRequest.reference, hash });
     } catch (error) {
       setPayment({
         status: "error",
-        error: error instanceof Error ? error.message : "World App payment failed",
+        error: error instanceof Error ? error.message : "Sepolia payment failed",
       });
     }
   }
@@ -392,10 +520,7 @@ export default function Home() {
             <span className="rounded-full border border-white/15 px-4 py-2">NYC 2026</span>
             <span className="rounded-full border border-white/15 px-4 py-2">Artist prior-art</span>
           </div>
-          <button className="inline-flex h-11 items-center gap-2 rounded-full bg-[#fff7cf] px-5 font-bold text-[#050505] transition hover:bg-white">
-            <WalletCards className="size-4" aria-hidden="true" />
-            {isWorldApp ? "World App ready" : "World App"}
-          </button>
+          <WalletConnectControl tone="header" />
         </div>
       </div>
 
@@ -483,24 +608,33 @@ export default function Home() {
               </span>
             </label>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="mt-5 grid gap-3 xl:grid-cols-3">
               <button
                 className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#fff7cf] px-5 font-black text-[#050505] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={verification.status === "pending"}
+                disabled={!canVerify}
                 onClick={handleVerifyWorld}
                 type="button"
               >
                 <Fingerprint className="size-5" aria-hidden="true" />
-                {verification.status === "verified" ? "World ID OK" : verification.status === "pending" ? "Verifying..." : "Verify World ID"}
+                {verification.status === "verified" ? "World ID OK" : verification.status === "pending" ? "Verifying..." : audioName ? "Verify World ID" : "Add track first"}
               </button>
+              <WalletConnectControl tone="panel" />
               <button
                 className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#f59abd] px-5 font-black text-[#050505] transition hover:bg-[#ffb1ce] disabled:cursor-not-allowed disabled:opacity-45"
-                disabled={!canPay}
+                disabled={!canPay || isSendingTransaction || isConfirmingTransaction || isSwitchingChain}
                 onClick={handlePayAndStart}
                 type="button"
               >
                 <ShieldCheck className="size-5" aria-hidden="true" />
-                {payment.status === "paid" ? "Flow paid" : payment.status === "pending" ? "Paying..." : "Pay in World App"}
+                {payment.status === "paid"
+                  ? "Fee paid"
+                  : isSwitchingChain
+                    ? "Switching..."
+                    : chainId !== sepolia.id
+                      ? "Switch to Sepolia"
+                      : isSendingTransaction || isConfirmingTransaction || payment.status === "pending"
+                      ? "Confirming..."
+                      : "Pay Sepolia fee"}
               </button>
             </div>
 
@@ -607,7 +741,7 @@ export default function Home() {
             <div className="mt-10 grid gap-4 sm:grid-cols-3">
               <CertificateMetric label="Commitment" value="0x8F...21C9" />
               <CertificateMetric label="Timestamp" value="Jun 13, 2026" />
-              <CertificateMetric label="Registry" value={echoConfig.registryChainId === 4801 ? "World Chain Sepolia" : "Base Sepolia"} />
+              <CertificateMetric label="Registry" value={echoConfig.registryChainId === sepolia.id ? "Ethereum Sepolia" : `Chain ${echoConfig.registryChainId}`} />
             </div>
             <div className="mt-8 flex flex-wrap gap-3">
               <button className="inline-flex min-h-12 items-center gap-2 rounded-full bg-[#050505] px-5 font-black text-white transition hover:bg-[#202020]">
@@ -616,7 +750,7 @@ export default function Home() {
               </button>
               <button className="inline-flex min-h-12 items-center gap-2 rounded-full border border-[#050505]/20 px-5 font-black transition hover:border-[#050505]">
                 <ExternalLink className="size-4" aria-hidden="true" />
-                Basescan
+                Etherscan
               </button>
             </div>
           </div>
@@ -630,7 +764,7 @@ export default function Home() {
               <Disc3 className="size-10 text-[#8fd5ff]" aria-hidden="true" />
             </div>
             <div className="space-y-3">
-              {["SEALED entry is private", "Report attached to Walrus blob", "Reveal gated by World App"].map((item) => (
+              {["SEALED entry is private", "Report attached to Walrus blob", "Reveal requires wallet signature"].map((item) => (
                 <div className="flex min-h-14 items-center gap-3 rounded-[8px] border border-white/10 px-4" key={item}>
                   <span className="grid size-7 place-items-center rounded-full bg-[#9ef7c9] text-[#050505]">
                     <Check className="size-4" aria-hidden="true" />
@@ -646,6 +780,8 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {worldQr ? <WorldIdQrModal connectorURI={worldQr.connectorURI} imageDataUrl={worldQr.imageDataUrl} onClose={() => setWorldQr(null)} /> : null}
 
       <nav className="fixed inset-x-0 bottom-5 z-40 mx-auto flex w-fit max-w-[calc(100%-2rem)] items-center gap-1 rounded-full border border-white/10 bg-[#111]/90 p-1 shadow-2xl backdrop-blur-xl">
         <a className="rounded-full bg-white/10 px-5 py-3 font-display text-lg font-black" href="#top">
@@ -665,6 +801,117 @@ export default function Home() {
         </a>
       </nav>
     </main>
+  );
+}
+
+function WorldIdQrModal({
+  connectorURI,
+  imageDataUrl,
+  onClose,
+}: {
+  connectorURI: string;
+  imageDataUrl: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/78 px-4 backdrop-blur-xl" role="dialog" aria-modal="true" aria-labelledby="world-id-title">
+      <div className="relative w-full max-w-[440px] rounded-[8px] border border-white/15 bg-[#050505] p-5 text-[#f8f6ee] shadow-2xl sm:p-6">
+        <button
+          className="absolute right-4 top-4 grid size-10 place-items-center rounded-full border border-white/15 text-white/70 transition hover:border-[#f59abd] hover:text-[#f59abd]"
+          onClick={onClose}
+          type="button"
+          aria-label="Close World ID QR"
+        >
+          <X className="size-5" aria-hidden="true" />
+        </button>
+
+        <div className="mb-5 flex items-center gap-3 pr-12">
+          <span className="grid size-12 place-items-center rounded-full bg-[#fff7cf] text-[#050505]">
+            <QrCodeIcon className="size-6" aria-hidden="true" />
+          </span>
+          <div>
+            <p className="text-sm uppercase text-white/45">World ID</p>
+            <h2 id="world-id-title" className="font-display text-2xl font-black">
+              Scan with World App
+            </h2>
+          </div>
+        </div>
+
+        <div className="rounded-[8px] border border-[#fff7cf]/40 bg-[#fff7cf] p-4">
+          <Image
+            className="mx-auto aspect-square w-full max-w-[320px]"
+            src={imageDataUrl}
+            alt="World ID verification QR code"
+            width={320}
+            height={320}
+            unoptimized
+          />
+        </div>
+
+        <div className="mt-5 rounded-[8px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/62">
+          Open World App, scan this code, then approve the proof. Echo will continue automatically once the proof is returned.
+        </div>
+
+        <a
+          className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-[#f59abd] px-5 font-black text-[#050505] transition hover:bg-[#ffb1ce]"
+          href={connectorURI}
+          rel="noreferrer"
+          target="_blank"
+        >
+          Open World App
+          <ArrowUpRight className="size-5" aria-hidden="true" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function WalletConnectControl({ tone }: { tone: "header" | "panel" }) {
+  const className =
+    tone === "header"
+      ? "inline-flex h-11 items-center gap-2 rounded-full bg-[#fff7cf] px-5 font-bold text-[#050505] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+      : "inline-flex min-h-14 items-center justify-center gap-2 rounded-full border border-white/15 px-5 font-black text-white transition hover:border-[#8fd5ff] hover:text-[#8fd5ff] disabled:cursor-not-allowed disabled:opacity-50";
+
+  return (
+    <ConnectButton.Custom>
+      {({ account, chain, mounted, openAccountModal, openChainModal, openConnectModal }) => {
+        const connected = mounted && account && chain;
+
+        if (!mounted) {
+          return (
+            <button className={className} disabled type="button">
+              <WalletCards className="size-4" aria-hidden="true" />
+              Connect wallet
+            </button>
+          );
+        }
+
+        if (!connected) {
+          return (
+            <button className={className} onClick={openConnectModal} type="button">
+              <WalletCards className="size-4" aria-hidden="true" />
+              Connect wallet
+            </button>
+          );
+        }
+
+        if (chain.unsupported || chain.id !== sepolia.id) {
+          return (
+            <button className={className} onClick={openChainModal} type="button">
+              <WalletCards className="size-4" aria-hidden="true" />
+              Wrong network
+            </button>
+          );
+        }
+
+        return (
+          <button className={className} onClick={openAccountModal} type="button">
+            <WalletCards className="size-4" aria-hidden="true" />
+            {tone === "header" ? account.displayName : `Sepolia · ${account.displayName}`}
+          </button>
+        );
+      }}
+    </ConnectButton.Custom>
   );
 }
 

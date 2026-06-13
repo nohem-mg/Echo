@@ -1,5 +1,4 @@
 import type { IDKitResult } from "@worldcoin/idkit-core";
-import type { PayResult } from "@worldcoin/minikit-js/commands";
 
 export type WorldVerification =
   | {
@@ -26,38 +25,35 @@ export type EchoPayment =
   | {
       status: "idle" | "pending";
       reference?: string;
-      transactionId?: never;
+      hash?: `0x${string}`;
       mode?: never;
     }
   | {
       status: "paid";
       reference: string;
-      transactionId: string;
-      mode: "world" | "mock";
+      hash: `0x${string}`;
+      mode: "evm";
+      blockNumber?: string;
     }
   | {
       status: "error";
       error: string;
       reference?: string;
-      transactionId?: never;
+      hash?: `0x${string}`;
       mode?: never;
     };
 
 export type PaymentCreateResponse = {
   reference: string;
-  to: `0x${string}`;
-  amount: number;
-  token: "WLD";
+  receiver: `0x${string}`;
+  amountEth: string;
+  token: "ETH";
   description: string;
-  mode: "world" | "mock";
+  chainId: 11155111;
 };
 
 export type PaymentConfirmRequest = {
-  payload: PayResult | {
-    transactionId: string;
-    reference: string;
-    from?: string;
-    chain?: string;
-    timestamp?: string;
-  };
+  hash: `0x${string}`;
+  reference: string;
+  expectedFrom?: `0x${string}`;
 };

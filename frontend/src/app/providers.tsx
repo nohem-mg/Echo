@@ -1,7 +1,28 @@
 "use client";
 
-import { MiniKitProvider } from "@worldcoin/minikit-js/minikit-provider";
+import "@rainbow-me/rainbowkit/styles.css";
 
-export default function Providers({ children }: { children: React.ReactNode }) {
-  return <MiniKitProvider props={{ appId: process.env.NEXT_PUBLIC_WORLD_APP_ID || "app_mock" }}>{children}</MiniKitProvider>;
+import { getDefaultConfig, RainbowKitProvider } from "@rainbow-me/rainbowkit";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
+import { WagmiProvider } from "wagmi";
+import { sepolia } from "wagmi/chains";
+
+const config = getDefaultConfig({
+  appName: "Echo",
+  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "echo-local-dev",
+  chains: [sepolia],
+  ssr: true,
+});
+
+export default function Providers({ children }: { children: ReactNode }) {
+  const [queryClient] = useState(() => new QueryClient());
+
+  return (
+    <WagmiProvider config={config}>
+      <QueryClientProvider client={queryClient}>
+        <RainbowKitProvider>{children}</RainbowKitProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
+  );
 }

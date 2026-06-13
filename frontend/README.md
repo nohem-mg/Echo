@@ -1,13 +1,14 @@
 # Echo Frontend
 
-Next.js, TypeScript, and Tailwind frontend for Echo, the confidential prior-art registry for unreleased music.
+Next.js, TypeScript, Tailwind, World ID, RainbowKit, wagmi, and viem frontend for Echo, the confidential prior-art registry for unreleased music.
 
 ## Stack
 
 - Next.js App Router
 - TypeScript
 - Tailwind CSS v4
-- World MiniKit / IDKit integration target
+- World ID / IDKit for proof of human
+- RainbowKit + wagmi + viem for EVM wallet and Sepolia fee payment
 - lucide-react icons
 
 ## Commands
@@ -22,7 +23,7 @@ The local app runs at http://localhost:3000 by default.
 
 ## Environment
 
-Copy `.env.local.example` to `.env.local` before wiring real World credentials.
+Copy `.env.local.example` to `.env.local` before wiring real credentials.
 
 ```bash
 cp .env.local.example .env.local
@@ -33,9 +34,11 @@ Important variables:
 - `NEXT_PUBLIC_WORLD_APP_ID`: World Developer Portal app id.
 - `NEXT_PUBLIC_WORLD_RP_ID`: World ID 4.0 relying party id.
 - `WORLD_RP_SIGNING_KEY`: server-only RP signing key for IDKit requests.
-- `WORLD_DEV_PORTAL_API_KEY`: server-only key for MiniKit payment verification.
-- `PAYMENT_RECEIVER_ADDRESS`: World App payment receiver.
-- `ECHO_ENABLE_MOCK_WORLD` / `NEXT_PUBLIC_ECHO_ENABLE_MOCK_WORLD`: set both to `false` for the real flow. Mock mode is opt-in only.
+- `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`: WalletConnect Cloud project id used by RainbowKit.
+- `NEXT_PUBLIC_FEE_RECEIVER_ADDRESS`: EVM address receiving the Sepolia fee.
+- `NEXT_PUBLIC_FLOW_FEE_ETH`: native ETH amount required before the flow starts.
+- `SEPOLIA_RPC_URL`: optional server RPC URL for transaction verification; viem uses the public Sepolia RPC fallback if empty.
+- `ECHO_ENABLE_MOCK_WORLD` / `NEXT_PUBLIC_ECHO_ENABLE_MOCK_WORLD`: set both to `false` for the real World ID flow. Mock mode is opt-in only.
 
 Check whether the real World config is complete:
 
@@ -46,37 +49,24 @@ curl http://localhost:3000/api/world/status
 ## Current UI Scope
 
 - Artist-first upload console for WAV/MP3
-- World ID and World App Pay action anchors
+- World ID proof request through IDKit
+- RainbowKit wallet connection on Ethereum Sepolia
+- Native ETH fee transaction before pipeline start
 - Simulated confidential pipeline states
 - Comparison report table with score tones
 - SEALED certificate preview with hash and explorer actions
 - Responsive desktop/mobile visual system inspired by artist studio and music agency references
 
-## Integration Anchors
-
-- World ID / MiniKit proof should replace the current `Verify World ID` placeholder.
-- MiniKit Pay should replace the current `Pay in World App` placeholder.
-- Payment confirmation must be verified on the backend before starting CRE.
-- Backend/CRE status streaming should feed `pipelineSteps`.
-- Final report API should replace the mock `matches` data.
-- Registry ABI/address should feed certificate and reveal actions.
-
-## Payment Direction
-
-The MVP UX should not require MetaMask. The target flow is World App first:
-
-1. Verify World ID.
-2. Request payment through MiniKit Pay.
-3. Confirm the payment on the backend.
-4. Start the confidential pipeline.
-5. Write the final clean verdict to the Registry.
-
-MiniKit Pay payments are World App / World Chain oriented. If the Registry is deployed on Base Sepolia, the backend or CRE should relay the registry transaction after payment confirmation.
-
 ## Current Integration State
 
-- MiniKit provider is mounted at the app root.
 - World ID uses IDKit Core 4.x request flow when World env vars are configured.
-- Payment uses `MiniKit.pay` when a real receiver is configured.
-- Local browser development only falls back to mock proof/payment when both mock env flags are explicitly set to `true`.
-- API routes exist for RP signature, proof verification, payment reference creation, and payment confirmation.
+- Payment uses `wagmi` `sendTransaction` to send native ETH on Sepolia.
+- The backend confirms receipt status, receiver, sender, amount, and reference calldata before starting the UI pipeline.
+- Local browser development only falls back to mock World ID proof when both mock env flags are explicitly set to `true`.
+
+## Next Integration Anchors
+
+- Replace mock pipeline rows with backend/CRE status streaming.
+- Persist used payment hashes/references server-side before production.
+- Replace mock comparison report data with the final report API.
+- Feed certificate/reveal actions from the deployed registry ABI/address.
