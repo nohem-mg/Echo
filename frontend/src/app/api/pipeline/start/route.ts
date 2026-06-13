@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { FlowStoreError, getFlow, getTrackForFlow, initializePipeline } from "@/lib/flow-store";
-import { buildFlowCommitmentHash, buildFlowRegistryRef } from "@/lib/registry-handoff";
+import { buildFlowCommitmentHash, buildFlowRegistryRef, buildProvisionalCreTrackId } from "@/lib/registry-handoff";
 import type { EchoFlow, EchoTrack } from "@/lib/types";
 
 type StartPipelineRequest = {
@@ -100,15 +100,10 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 function buildCreTriggerPayload(flow: EchoFlow, track: EchoTrack, audioRef: string) {
-  const commitmentHash = flow.commitmentHash ?? buildFlowCommitmentHash(flow.id, flow.trackFingerprint);
-  const registryRef = flow.registryRef ?? buildFlowRegistryRef(track.id);
-  const registryTrackId = flow.registryTrackId;
-  if (!registryTrackId) {
-    throw new FlowStoreError(
-      "Flow is missing on-chain registryTrackId. Call registerTrack on Sepolia before starting the CRE pipeline.",
-      409,
-    );
-  }
+  const commitmentHash = buildFlowCommitmentHash(flow.id, flow.trackFingerprint);
+  const registryRef = buildFlowRegistryRef(track.id);
+  const registryTrackId = buildProvisionalCreTrackId(track.id);
+  const trackIdSource = "provisional_upload_id";
 
   return {
     payload: {
@@ -122,9 +117,9 @@ function buildCreTriggerPayload(flow: EchoFlow, track: EchoTrack, audioRef: stri
       },
     } satisfies CreTriggerPayload,
     sources: {
-      trackIdSource: "registry",
-      commitmentHashSource: flow.commitmentHash ? "flow" : "provisional_fingerprint",
-      registryRefSource: flow.registryRef ? "flow" : "provisional_upload_id",
+      trackIdSource,
+      commitmentHashSource: "provisional_fingerprint",
+      registryRefSource: "provisional_upload_id",
     } as const,
   };
 }

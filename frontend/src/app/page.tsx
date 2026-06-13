@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { IDKit, orbLegacy, type IDKitResult } from "@worldcoin/idkit-core";
 import Image from "next/image";
@@ -266,6 +266,9 @@ export default function Home() {
   const [pipelineProgressStatus, setPipelineProgressStatus] = useState("");
   const [isStartingPipeline, setIsStartingPipeline] = useState(false);
   const [creDisabled, setCreDisabled] = useState(false);
+  const [isSealingOnChain, setIsSealingOnChain] = useState(false);
+  const sealAttemptedRef = useRef<string | null>(null);
+  const sealInFlightRef = useRef<string | null>(null);
   const { writeContractAsync: writeRegistryContract, isPending: isWritingRegistry } = useWriteContract();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
@@ -499,7 +502,9 @@ export default function Home() {
           setPipelineProgressStatus(
             data.flow.registryTxHash
               ? "Pipeline completed: Registry seal confirmed on Sepolia"
-              : "Pipeline completed: final report received. Waiting for the Registry transaction",
+              : data.flow.report?.verdict === "CLEAN" && echoConfig.registryAddress
+                ? "Verdict CLEAN — inscription on-chain en cours..."
+                : "Pipeline completed: final report received",
           );
         } else if (data.flow?.status === "pipeline_blocked") {
           setPipelineProgressStatus("Pipeline stopped: no on-chain seal was created");
@@ -508,7 +513,13 @@ export default function Home() {
         }
 
         const terminalStatuses: string[] = ["pipeline_completed", "pipeline_blocked", "error"];
-        if (data.flow && terminalStatuses.includes(data.flow.status)) {
+        const awaitingRegistrySeal =
+          data.flow?.status === "pipeline_completed" &&
+          !data.flow.registryTxHash &&
+          data.flow.report?.verdict === "CLEAN" &&
+          Boolean(echoConfig.registryAddress);
+
+        if (data.flow && terminalStatuses.includes(data.flow.status) && !awaitingRegistrySeal) {
           clearInterval(intervalId);
         }
       } catch (error) {
@@ -524,6 +535,103 @@ export default function Home() {
       clearInterval(intervalId);
     };
   }, [creDisabled, pipelineStarted, flow?.id]);
+
+  // After CLEAN analysis: registerTrack (wallet) then CRE onReport seal.
+  useEffect(() => {
+    if (!flow?.id || flow.status !== "pipeline_completed") {
+      return;
+    }
+    if (flow.registryTxHash || flow.report?.verdict !== "CLEAN") {
+      return;
+    }
+    if (!echoConfig.registryAddress || creDisabled) {
+      return;
+    }
+
+    const flowId = flow.id;
+    const needsRegisterTrack = !flow.registryTrackId;
+    const sealAttemptKey = needsRegisterTrack ? `${flowId}:register+seal` : `${flowId}:seal`;
+    if (sealAttemptedRef.current === sealAttemptKey) {
+      return;
+    }
+    if (sealInFlightRef.current === flowId) {
+      return;
+    }
+
+    sealAttemptedRef.current = sealAttemptKey;
+    sealInFlightRef.current = flowId;
+    setIsSealingOnChain(true);
+
+    void (async () => {
+      try {
+        const statusResponse = await fetch(`/api/pipeline/status?flowId=${flowId}`);
+        if (!statusResponse.ok) {
+          throw new Error(`Failed to load flow status (HTTP ${statusResponse.status})`);
+        }
+
+        const statusData = (await statusResponse.json()) as {
+          flow?: EchoFlow;
+          track?: { id?: string };
+        };
+        const uploadTrackId = statusData.track?.id;
+        if (!uploadTrackId) {
+          throw new Error("Track not found for on-chain seal");
+        }
+
+        let activeFlow = statusData.flow ?? flow;
+
+        if (!activeFlow.registryTrackId) {
+          setPipelineProgressStatus("Verdict CLEAN — signature registerTrack sur Sepolia...");
+          activeFlow = await registerTrackOnChain(activeFlow, uploadTrackId);
+          setFlow(activeFlow);
+          if (!activeFlow.registryTrackId) {
+            throw new Error("registerTrack did not return a registry track ID");
+          }
+          sealAttemptedRef.current = `${flowId}:seal`;
+        }
+
+        setPipelineProgressStatus("CRE seal callback on Sepolia...");
+        const sealResponse = await fetch("/api/pipeline/seal", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ flowId }),
+        });
+
+        if (!sealResponse.ok) {
+          const errorBody = await readApiErrorBody(sealResponse);
+          throw new Error(formatApiError(errorBody, `Failed to seal on-chain (HTTP ${sealResponse.status})`));
+        }
+
+        const sealData = (await sealResponse.json()) as {
+          creSeal?: { status: string; error?: string; reason?: string };
+        };
+
+        if (sealData.creSeal?.status === "failed") {
+          throw new Error(sealData.creSeal.error ?? "CRE seal trigger failed");
+        }
+        if (sealData.creSeal?.status === "disabled") {
+          throw new Error(sealData.creSeal.reason ?? "CRE seal trigger disabled");
+        }
+      } catch (error) {
+        sealAttemptedRef.current = null;
+        setPipelineProgressStatus(
+          `On-chain seal failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        if (sealInFlightRef.current === flowId) {
+          sealInFlightRef.current = null;
+        }
+        setIsSealingOnChain(false);
+      }
+    })();
+  }, [
+    creDisabled,
+    flow?.id,
+    flow?.registryTrackId,
+    flow?.registryTxHash,
+    flow?.report?.verdict,
+    flow?.status,
+  ]);
 
   // Local simulation fallback when the CRE trigger is disabled.
   useEffect(() => {
@@ -984,6 +1092,9 @@ export default function Home() {
     }
 
     const registryAddress = echoConfig.registryAddress as `0x${string}`;
+    const commitmentHash = buildFlowCommitmentHash(currentFlow.id, currentFlow.trackFingerprint);
+    const registryRef = buildFlowRegistryRef(uploadTrackId);
+
     if (currentFlow.registryTrackId) {
       const alreadyRegistered = await isTrackRegisteredOnChain(
         publicClient,
@@ -991,7 +1102,16 @@ export default function Home() {
         currentFlow.registryTrackId,
       );
       if (alreadyRegistered) {
-        return currentFlow;
+        const entry = (await publicClient.readContract({
+          address: registryAddress,
+          abi: registryContractAbi,
+          functionName: "getEntry",
+          args: [currentFlow.registryTrackId],
+        })) as { commitmentHash?: `0x${string}` };
+
+        if (entry.commitmentHash?.toLowerCase() === commitmentHash.toLowerCase()) {
+          return currentFlow;
+        }
       }
     }
 
@@ -1001,8 +1121,7 @@ export default function Home() {
       throw new Error("Connect your wallet on Sepolia before starting analysis.");
     }
 
-    const commitmentHash = buildFlowCommitmentHash(currentFlow.id, currentFlow.trackFingerprint);
-    const registryRef = buildFlowRegistryRef(uploadTrackId);
+    const nullifier = worldNullifierToBigInt(currentFlow.nullifierHash);
 
     const recoveredTrackId = await findRegistryTrackIdByCommitment(
       publicClient,
@@ -1014,8 +1133,6 @@ export default function Home() {
       setPipelineProgressStatus("Linking existing on-chain Registry entry...");
       return persistRegistryRegistration(currentFlow.id, recoveredTrackId, commitmentHash, registryRef);
     }
-
-    const nullifier = worldNullifierToBigInt(currentFlow.nullifierHash);
 
     setPipelineProgressStatus("Registering track on Ethereum Sepolia...");
 
@@ -1030,7 +1147,9 @@ export default function Home() {
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash: registerTxHash });
       if (receipt.status !== "success") {
-        throw new Error("registerTrack transaction failed on Sepolia.");
+        throw new Error(
+          "registerTrack a échoué sur Sepolia. Vérifiez votre wallet et le réseau Sepolia.",
+        );
       }
 
       const registryTrackId = parseTrackRegisteredTrackId(receipt.logs, registryAddress);
@@ -1082,9 +1201,6 @@ export default function Home() {
       let activeFlow = uploadData.flow;
       setFlow(activeFlow);
       setLivePipelineSteps(uploadData.pipeline);
-
-      activeFlow = await registerTrackOnChain(activeFlow, uploadData.track.id);
-      setFlow(activeFlow);
       setPipelineProgressStatus("Starting CRE handoff...");
 
       console.log("[Echo] Starting pipeline...");
@@ -1749,7 +1865,11 @@ export default function Home() {
               </p>
               {flow?.status === "pipeline_completed" ? (
                 <p className="mt-6 rounded-[8px] border border-[#9ef7c9]/25 bg-[#9ef7c9]/10 p-4 text-sm font-bold text-[#9ef7c9]">
-                  CLEAN verdict received. Waiting for registryTxHash before showing the certificate.
+                  {flow.registryTxHash
+                    ? "Registry seal confirmed on Sepolia."
+                    : isSealingOnChain
+                      ? "Verdict CLEAN — registerTrack et callback CRE en cours..."
+                      : "Verdict CLEAN reçu — inscription on-chain après analyse (pas avant)."}
                 </p>
               ) : null}
             </div>

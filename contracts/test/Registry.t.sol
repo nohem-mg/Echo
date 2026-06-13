@@ -33,11 +33,14 @@ contract RegistryTest is Test {
         assertTrue(e.timestamp > 0);
     }
 
-    function test_registerTrack_duplicateNullifier_reverts() public {
-        _register(artist);
-        vm.prank(hacker);
-        vm.expectRevert(Registry.NullifierAlreadyUsed.selector);
-        registry.registerTrack(nullifier, keccak256("other"), registryRef);
+    function test_registerTrack_sameNullifier_multipleTracks() public {
+        bytes32 first = _register(artist);
+        vm.prank(artist);
+        bytes32 second = registry.registerTrack(nullifier, keccak256("other-commitment"), registryRef);
+
+        assertTrue(first != second);
+        assertEq(registry.getEntry(first).worldNullifier, nullifier);
+        assertEq(registry.getEntry(second).worldNullifier, nullifier);
     }
 
     function test_onReport_wrongCaller_reverts() public {

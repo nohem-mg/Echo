@@ -66,6 +66,10 @@ type PipelineOutcomeInput = {
   registryRef?: `0x${string}`;
   commitmentHash?: `0x${string}`;
   reason?: string;
+  /** Drop stale on-chain seal fields before a fresh analysis/seal cycle. */
+  clearOnChainHandoff?: boolean;
+  /** Drop a previous registryTxHash when analysis completes without a new seal tx. */
+  clearRegistryTxHash?: boolean;
 };
 
 type FlowFile = {
@@ -641,7 +645,15 @@ export async function resetFlowForPipelineRetry(flowId: string, trackId: string)
       await client.query(
         `
         UPDATE echo_flows
-        SET status = 'pipeline_started', error = NULL, report = NULL, updated_at = now()
+        SET
+          status = 'pipeline_started',
+          error = NULL,
+          report = NULL,
+          commitment_hash = NULL,
+          registry_ref = NULL,
+          registry_track_id = NULL,
+          registry_tx_hash = NULL,
+          updated_at = now()
         WHERE id = $1
         `,
         [flowId],
@@ -667,6 +679,10 @@ export async function resetFlowForPipelineRetry(flowId: string, trackId: string)
           status: "pipeline_started",
           error: undefined,
           report: undefined,
+          commitmentHash: undefined,
+          registryRef: undefined,
+          registryTrackId: undefined,
+          registryTxHash: undefined,
           updatedAt: now,
         }
       : storedFlow,
@@ -887,10 +903,26 @@ export async function updatePipelineOutcome(
       SET
         status = $2,
         error = $3,
-        commitment_hash = COALESCE($4, commitment_hash),
-        registry_ref = COALESCE($5, registry_ref),
-        registry_track_id = COALESCE($6, registry_track_id),
-        registry_tx_hash = COALESCE($7, registry_tx_hash),
+        registry_track_id = CASE
+          WHEN $9::boolean THEN NULL
+          WHEN $6 IS NOT NULL THEN $6
+          ELSE registry_track_id
+        END,
+        registry_tx_hash = CASE
+          WHEN $9::boolean OR $10::boolean THEN NULL
+          WHEN $7 IS NOT NULL THEN $7
+          ELSE registry_tx_hash
+        END,
+        commitment_hash = CASE
+          WHEN $9::boolean THEN NULL
+          WHEN $4 IS NOT NULL THEN $4
+          ELSE commitment_hash
+        END,
+        registry_ref = CASE
+          WHEN $9::boolean THEN NULL
+          WHEN $5 IS NOT NULL THEN $5
+          ELSE registry_ref
+        END,
         report = COALESCE($8::jsonb, report),
         updated_at = now()
       WHERE id = $1
@@ -905,6 +937,8 @@ export async function updatePipelineOutcome(
         input.registryTrackId ?? null,
         input.registryTxHash ?? null,
         input.report ? JSON.stringify(input.report) : null,
+        input.clearOnChainHandoff ?? false,
+        input.clearRegistryTxHash ?? false,
       ],
     );
 
@@ -916,10 +950,17 @@ export async function updatePipelineOutcome(
     ...flow,
     status,
     error: input.reason ?? (status === "error" ? flow.error ?? "Pipeline failed" : undefined),
-    commitmentHash: input.commitmentHash ?? flow.commitmentHash,
-    registryRef: input.registryRef ?? flow.registryRef,
-    registryTrackId: input.registryTrackId ?? flow.registryTrackId,
-    registryTxHash: input.registryTxHash ?? flow.registryTxHash,
+    commitmentHash: input.clearOnChainHandoff
+      ? undefined
+      : input.commitmentHash ?? flow.commitmentHash,
+    registryRef: input.clearOnChainHandoff ? undefined : input.registryRef ?? flow.registryRef,
+    registryTrackId: input.clearOnChainHandoff
+      ? undefined
+      : input.registryTrackId ?? flow.registryTrackId,
+    registryTxHash:
+      input.clearOnChainHandoff || input.clearRegistryTxHash
+        ? undefined
+        : input.registryTxHash ?? flow.registryTxHash,
     report: input.report ?? flow.report,
   }));
 }

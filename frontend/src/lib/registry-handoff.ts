@@ -17,6 +17,11 @@ export function buildFlowRegistryRef(uploadTrackId: string): `0x${string}` {
   return toRegistryBytes32(`registry-ref:${uploadTrackId}`);
 }
 
+/** CRE-only track id when no on-chain registerTrack is possible (analysis / REJECTED path). */
+export function buildProvisionalCreTrackId(uploadTrackId: string): `0x${string}` {
+  return toRegistryBytes32(`registry-track:${uploadTrackId}`);
+}
+
 export function worldNullifierToBigInt(nullifierHash: string): bigint {
   if (/^0x[0-9a-fA-F]+$/.test(nullifierHash)) {
     try {
@@ -91,3 +96,4 @@ export async function findRegistryTrackIdByCommitment(
 
   return undefined;
 }
+

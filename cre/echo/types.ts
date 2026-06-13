@@ -10,6 +10,8 @@ export type Verdict = "CLEAN" | "SIMILAR" | "REJECTED" | "ERROR";
 // Pipeline input (HTTP trigger payload)
 // --------------------------------------------------------------------------
 export type PipelineInput = {
+  /** analysis = full DAG; seal = onReport only after wallet registerTrack (CLEAN). */
+  mode?: "analysis" | "seal";
   // Echo frontend flow id, used only for internal /api/pipeline/events updates.
   flowId?: string;
   // Raw audio reference (signed backend URL or opaque storage ref).

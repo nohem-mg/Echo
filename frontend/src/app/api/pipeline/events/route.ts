@@ -67,6 +67,7 @@ export async function POST(request: Request): Promise<Response> {
         registryTxHash: body.registryTxHash,
         registryRef: body.registryRef,
         commitmentHash: body.commitmentHash,
+        clearRegistryTxHash: !body.registryTxHash,
       });
     } else if (flowStatus === "pipeline_blocked") {
       await blockPipeline({

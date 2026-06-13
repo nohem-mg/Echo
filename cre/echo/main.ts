@@ -104,6 +104,7 @@ const finalizeResult = (
   runtime: Runtime<Config>,
   client: PipelineClient,
   result: PipelineResult,
+  options: { dispatchOnChain?: boolean } = {},
 ): PipelineResult => {
   // ERROR = infrastructure failure; no on-chain state written.
   if (result.verdict === "ERROR") return result;
@@ -127,10 +128,14 @@ const finalizeResult = (
     return { ...withAgents, attestation };
   }
 
-  // Dispatch on-chain when Cyriac provides a real Registry address (not zero / placeholder).
+  // On-chain write only after wallet registerTrack (seal phase), not during analysis.
   const registry = runtime.config.registryAddress?.toLowerCase();
   let registryTxHash: string | undefined;
-  if (registry && registry !== "0x0000000000000000000000000000000000000000") {
+  if (
+    options.dispatchOnChain === true &&
+    registry &&
+    registry !== "0x0000000000000000000000000000000000000000"
+  ) {
     registryTxHash = dispatchOnChainCallback(runtime, runtime.config.registryAddress!, report, {
       gasLimit: runtime.config.writeReportGasLimit,
       sepoliaRpcUrl: runtime.config.sepoliaRpcUrl,
@@ -306,11 +311,44 @@ export const runPipeline = (runtime: Runtime<Config>, input: PipelineInput): Pip
 
   let finalized: PipelineResult;
   try {
-    finalized = finalizeResult(runtime, client, result);
+    finalized = finalizeResult(runtime, client, result, { dispatchOnChain: false });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     runtime.log(`STOP — finalization failed: ${reason}`);
     finalized = halt(input, "ERROR", `finalization failed: ${reason}`, client.getAgentAttestations());
+  }
+
+  notifyPipelineCompletion(runtime, runtime.config, input, finalized);
+  return finalized;
+};
+
+// Second-phase on-chain seal: wallet registerTrack must exist before onReport.
+export const runOnChainSeal = (runtime: Runtime<Config>, input: PipelineInput): PipelineResult => {
+  if (input.mode !== "seal") {
+    return halt(input, "ERROR", "seal mode required for on-chain callback");
+  }
+
+  runtime.log(`Echo — on-chain seal trackId=${input.trackId.slice(0, 10)}…`);
+
+  const client = createBackendClient(runtime, runtime.config.backendBaseUrl, {
+    useConfidentialHttp: runtime.config.useConfidentialHttp,
+    secretsOwner: runtime.config.secretsOwner,
+  });
+
+  const result: PipelineResult = {
+    verdict: "CLEAN",
+    trackId: input.trackId,
+    commitmentHash: input.commitmentHash,
+    registryRef: input.registryRef,
+  };
+
+  let finalized: PipelineResult;
+  try {
+    finalized = finalizeResult(runtime, client, result, { dispatchOnChain: true });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    runtime.log(`STOP — seal finalization failed: ${reason}`);
+    finalized = halt(input, "ERROR", `seal finalization failed: ${reason}`, client.getAgentAttestations());
   }
 
   notifyPipelineCompletion(runtime, runtime.config, input, finalized);
@@ -322,6 +360,10 @@ export const runPipeline = (runtime: Runtime<Config>, input: PipelineInput): Pip
 // --------------------------------------------------------------------------
 const onSubmission = (runtime: Runtime<Config>, payload: HTTPPayload): PipelineResult => {
   const input = parsePipelineInput(JSON.parse(new TextDecoder().decode(payload.input)));
+  if (input.mode === "seal") {
+    return runOnChainSeal(runtime, input);
+  }
+
   runtime.log(`Echo — new submission (commitment ${input.commitmentHash.slice(0, 10)}…)`);
   if (runtime.config.useConfidentialHttp) {
     runtime.log("Confidential AI — sensitive agents routed via ConfidentialHTTPClient");

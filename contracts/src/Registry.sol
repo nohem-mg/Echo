@@ -20,13 +20,11 @@ contract Registry {
 
     mapping(bytes32  => Entry)     public entries;
     mapping(address  => bytes32[]) public artistTracks;
-    mapping(uint256  => bool)      public usedNullifiers;
 
     event TrackRegistered(address indexed artist, bytes32 indexed trackId, bytes32 commitmentHash, uint256 timestamp);
     event StatusUpdated(bytes32 indexed trackId, Status status);
     event TrackRevealed(bytes32 indexed trackId, bytes32 fullProfileHash);
 
-    error NullifierAlreadyUsed();
     error TrackNotFound();
     error NotArtist();
     error InvalidStatus();
@@ -41,9 +39,6 @@ contract Registry {
         bytes32 commitmentHash,
         bytes32 registryRef
     ) external returns (bytes32 trackId) {
-        if (usedNullifiers[nullifier]) revert NullifierAlreadyUsed();
-        usedNullifiers[nullifier] = true;
-
         trackId = keccak256(abi.encodePacked(msg.sender, commitmentHash, block.timestamp));
 
         entries[trackId] = Entry({
