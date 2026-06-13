@@ -136,7 +136,7 @@ function resolveFlowStatus(body: PipelineEventRequest) {
     return body.flowStatus;
   }
 
-  if (body.report?.verdict === "CLEAN" && body.registryTxHash) {
+  if (body.report?.verdict === "CLEAN") {
     return "pipeline_completed";
   }
 

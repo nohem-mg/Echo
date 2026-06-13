@@ -136,8 +136,8 @@ function postPipelineEvent<C extends PipelineEventsConfig>(
           method: "POST",
           body: new TextEncoder().encode(body),
           headers: {
-            Authorization: [`Bearer ${secret}`],
-            "content-type": ["application/json"],
+            Authorization: `Bearer ${secret}`,
+            "content-type": "application/json",
           },
           timeout: `${Math.floor(timeoutMs / 1000)}s`,
         })

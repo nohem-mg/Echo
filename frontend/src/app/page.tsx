@@ -257,6 +257,7 @@ export default function Home() {
   const [livePipelineSteps, setLivePipelineSteps] = useState<EchoPipelineStep[]>([]);
   const [pipelineProgressStatus, setPipelineProgressStatus] = useState("");
   const [isStartingPipeline, setIsStartingPipeline] = useState(false);
+  const [creDisabled, setCreDisabled] = useState(false);
   const { writeContractAsync: revealTrackContract, isPending: isRevealingTrack } = useWriteContract();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
@@ -458,9 +459,9 @@ export default function Home() {
     };
   }, [address, payment.status, paymentReceipt, pendingPaymentHash, pendingPaymentReference, pendingQuote]);
 
-  // Live polling for pipeline status (if not in mock/demo mode)
+  // Live polling for pipeline status when a CRE trigger is active.
   useEffect(() => {
-    if (!pipelineStarted || !flow?.id || flow.worldMode === "mock") {
+    if (!pipelineStarted || !flow?.id || creDisabled) {
       return;
     }
 
@@ -489,7 +490,7 @@ export default function Home() {
           setPipelineProgressStatus(
             data.flow.registryTxHash
               ? "Pipeline completed: Registry seal confirmed on Sepolia"
-              : "Pipeline completed: waiting for the CRE Registry transaction",
+              : "Pipeline completed: final report received. Waiting for the Registry transaction",
           );
         } else if (data.flow?.status === "pipeline_blocked") {
           setPipelineProgressStatus("Pipeline stopped: no on-chain seal was created");
@@ -513,11 +514,11 @@ export default function Home() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [pipelineStarted, flow?.id, flow?.worldMode]);
+  }, [creDisabled, pipelineStarted, flow?.id]);
 
-  // Simulation for mock/demo mode pipeline progress
+  // Local simulation fallback when the CRE trigger is disabled.
   useEffect(() => {
-    if (!pipelineStarted || !flow || flow.worldMode !== "mock" || livePipelineSteps.length === 0) {
+    if (!pipelineStarted || !flow || !creDisabled || livePipelineSteps.length === 0) {
       return;
     }
 
@@ -636,7 +637,7 @@ export default function Home() {
         clearTimeout(timer);
       }
     };
-  }, [pipelineStarted, flow, livePipelineSteps, audioName, trackFingerprint]);
+  }, [pipelineStarted, flow, livePipelineSteps, audioName, trackFingerprint, creDisabled]);
 
   async function handleAudioFile(file: File) {
     setAudioFile(file);
@@ -650,6 +651,7 @@ export default function Home() {
     setLivePipelineSteps([]);
     setPipelineProgressStatus("");
     setIsStartingPipeline(false);
+    setCreDisabled(false);
 
     try {
       setTrackFingerprint(await createAudioFingerprint(file));
@@ -812,27 +814,34 @@ export default function Home() {
   }
 
   async function handlePayAndStart() {
+    console.log("[Echo] handlePayAndStart called", { audioName, verificationStatus: verification.status, paymentStatus: payment.status });
     if (!audioName || verification.status !== "verified" || payment.status === "pending" || payment.status === "paid") {
+      console.log("[Echo] handlePayAndStart early return — guard failed");
       return;
     }
 
     // Mock the payment — skip the real Sepolia transaction entirely
     const mockHash = `0x${"ab".repeat(32)}` as `0x${string}`;
     const mockReference = `mock-ref-${crypto.randomUUID()}`;
+    const flowId = verification.flow.id;
+    console.log("[Echo] Mock payment starting, flowId:", flowId);
 
     try {
       // Still create the payment on the backend so the flow advances
       const paymentRequest = (await fetch("/api/payments/create", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ flowId: verification.flow.id }),
+        body: JSON.stringify({ flowId }),
       }).then((response) => {
+        console.log("[Echo] /api/payments/create response:", response.status);
         if (!response.ok) {
           throw new Error("Could not create payment request");
         }
 
         return response.json();
       })) as PaymentCreateResponse;
+
+      console.log("[Echo] Payment created:", { flowId: paymentRequest.flowId, reference: paymentRequest.reference });
 
       if (paymentRequest.flow) {
         setFlow(paymentRequest.flow);
@@ -844,21 +853,24 @@ export default function Home() {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            flowId: paymentRequest.flowId ?? verification.flow.id,
+            flowId: paymentRequest.flowId ?? flowId,
             hash: mockHash,
             reference: paymentRequest.reference ?? mockReference,
             expectedFrom: address ?? "0x0000000000000000000000000000000000000000",
           }),
         });
 
+        console.log("[Echo] /api/payments/confirm response:", confirmResponse.status);
+
         if (confirmResponse.ok) {
           const confirmed = (await confirmResponse.json()) as { flow?: EchoFlow };
           if (confirmed.flow) {
+            console.log("[Echo] Payment confirmed, flow status:", confirmed.flow.status);
             setFlow(confirmed.flow);
           }
         }
-      } catch {
-        // Backend confirm failed — that's fine, we proceed anyway
+      } catch (confirmError) {
+        console.warn("[Echo] Backend confirm failed:", confirmError);
       }
 
       setPayment({
@@ -869,8 +881,12 @@ export default function Home() {
         blockNumber: "0",
       });
       setPendingQuote(null);
-    } catch {
-      // If backend payment/create fails, still mock the payment so the demo works
+      console.log("[Echo] Payment marked as paid");
+      if (audioFile) {
+        void startPipelineForFlow(paymentRequest.flowId ?? flowId, audioFile);
+      }
+    } catch (payError) {
+      console.warn("[Echo] payment/create failed, mocking anyway:", payError);
       setPayment({
         status: "paid",
         reference: mockReference,
@@ -879,10 +895,14 @@ export default function Home() {
         blockNumber: "0",
       });
       setPendingQuote(null);
+      if (audioFile) {
+        void startPipelineForFlow(flowId, audioFile);
+      }
     }
   }
 
   async function handlePrimaryAction() {
+    console.log("[Echo] handlePrimaryAction called", { paymentStatus: payment.status });
     if (payment.status !== "paid") {
       await handlePayAndStart();
       return;
@@ -892,44 +912,57 @@ export default function Home() {
   }
 
   async function handleUploadAndStart() {
+    console.log("[Echo] handleUploadAndStart called", { paymentStatus: payment.status, flowId: flow?.id, hasAudioFile: !!audioFile, pipelineStarted, isStartingPipeline });
     if (payment.status !== "paid" || !flow?.id || !audioFile || pipelineStarted || isStartingPipeline) {
+      console.log("[Echo] handleUploadAndStart early return — guard failed");
       return;
     }
 
+    await startPipelineForFlow(flow.id, audioFile);
+  }
+
+  async function startPipelineForFlow(flowId: string, file: File) {
     try {
       setIsStartingPipeline(true);
       setPipelineProgressStatus("Uploading track for confidential analysis...");
       const formData = new FormData();
-      formData.append("flowId", flow.id);
+      formData.append("flowId", flowId);
       formData.append("fingerprint", trackFingerprint);
-      formData.append("file", audioFile);
+      formData.append("file", file);
 
+      console.log("[Echo] Uploading track...", { flowId, fingerprint: trackFingerprint });
       const uploadResponse = await fetch("/api/tracks/upload", {
         method: "POST",
         body: formData,
       });
 
+      console.log("[Echo] /api/tracks/upload response:", uploadResponse.status);
       if (!uploadResponse.ok) {
         const errorBody = await uploadResponse.json().catch(() => null);
+        console.error("[Echo] Upload error:", errorBody);
         throw new Error(formatApiError(errorBody, "Failed to upload track"));
       }
 
       const uploadData = (await uploadResponse.json()) as TrackUploadResponse;
+      console.log("[Echo] Upload success, track:", uploadData.track?.id, "flow status:", uploadData.flow?.status);
       setFlow(uploadData.flow);
       setLivePipelineSteps(uploadData.pipeline);
       setPipelineProgressStatus("Starting CRE handoff...");
 
+      console.log("[Echo] Starting pipeline...");
       const startResponse = await fetch("/api/pipeline/start", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          flowId: flow.id,
+          flowId,
           trackId: uploadData.track.id,
         }),
       });
 
+      console.log("[Echo] /api/pipeline/start response:", startResponse.status);
       if (!startResponse.ok) {
         const errorBody = await startResponse.json().catch(() => null);
+        console.error("[Echo] Pipeline start error:", errorBody);
         throw new Error(formatApiError(errorBody, "Failed to start pipeline"));
       }
 
@@ -943,18 +976,25 @@ export default function Home() {
         };
       };
 
+      console.log("[Echo] Pipeline started, creTrigger:", startData.creTrigger, "flow status:", startData.flow?.status);
+
       if (startData.flow) {
         setFlow(startData.flow);
       }
       if (startData.pipeline) {
         setLivePipelineSteps(startData.pipeline);
       }
-      setPipelineStarted(true);
       if (startData.creTrigger?.status === "failed") {
+        setPipelineStarted(false);
+        setCreDisabled(false);
         setPipelineProgressStatus(`CRE trigger failed: ${startData.creTrigger.error ?? "unknown error"}`);
       } else if (startData.creTrigger?.status === "disabled") {
-        setPipelineProgressStatus(`Pipeline initialized. Start CRE manually: ${startData.creTrigger.reason ?? "CRE trigger disabled"}`);
+        setPipelineStarted(true);
+        setCreDisabled(true);
+        setPipelineProgressStatus("Pipeline initialized. Running local simulation...");
       } else {
+        setPipelineStarted(true);
+        setCreDisabled(false);
         setPipelineProgressStatus("Confidential analysis pipeline running...");
       }
     } catch (error) {
@@ -1433,9 +1473,41 @@ export default function Home() {
                 <p className="border-t border-white/10 p-4 text-sm leading-6 text-white/65">{activeReport.ai_summary}</p>
               ) : null}
             </div>
-          ) : verdictInfo.showMatches ? (
-            <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/45">
-              Report pending. Waiting for backend similarity rows and AI summary.
+          ) : verdictInfo.showMatches && activeReport ? (
+            <div className="rounded-[8px] border border-white/15 bg-[#080808] p-6 sm:p-8">
+              <div className="grid gap-4 sm:grid-cols-3">
+                {[
+                  {
+                    label: "Key / mode",
+                    value: `${activeReport.submitted_track?.key ?? "Unknown"} ${activeReport.submitted_track?.mode ?? ""}`.trim(),
+                  },
+                  {
+                    label: "BPM",
+                    value: typeof activeReport.submitted_track?.BPM === "number" ? String(activeReport.submitted_track.BPM) : "Unknown",
+                  },
+                  {
+                    label: "Fingerprint",
+                    value: activeReport.submitted_track?.fingerprint
+                      ? `${activeReport.submitted_track.fingerprint.slice(0, 18)}...`
+                      : "Not provided",
+                  },
+                ].map((item) => (
+                  <div className="rounded-[8px] border border-white/10 bg-white/[0.03] p-4" key={item.label}>
+                    <p className="text-xs uppercase tracking-wider text-white/40">{item.label}</p>
+                    <p className="mt-2 break-words font-mono text-sm text-white/80">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5 rounded-[8px] border border-[#9ef7c9]/20 bg-[#9ef7c9]/10 p-5">
+                <p className={`font-bold ${verdictInfo.colorClass}`}>
+                  {activeReport.verdict === "CLEAN"
+                    ? "No similar tracks above the report threshold."
+                    : "Final report received without ranked similarity rows."}
+                </p>
+                {activeReport.ai_summary ? (
+                  <p className="mt-3 text-sm leading-6 text-white/70">{activeReport.ai_summary}</p>
+                ) : null}
+              </div>
             </div>
           ) : (
             <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/45">
