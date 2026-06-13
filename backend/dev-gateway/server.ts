@@ -85,7 +85,7 @@ const postJson = async (baseUrl: string, path: string, body: unknown): Promise<a
 
 // Step 1 — audio → MIDI.
 const proxyConvert = async (audioFile: string) => {
-  const body = (await postAudio(BASIC_PITCH_URL, "/convert", audioFile)) as { midi_sequence: unknown };
+  const body = (await postAudio(BASIC_PITCH_URL, "/api/convert", audioFile)) as { midi_sequence: unknown };
   console.log(`[gateway] convert via basic-pitch (audioRef=${audioFile.slice(0, 32)}…)`);
   return { midiSequence: JSON.stringify(body.midi_sequence) };
 };

@@ -11,7 +11,8 @@ from .schemas import ConvertResponse
 from .service import BasicPitchService
 
 logger = get_logger(__name__)
-router = APIRouter()
+
+router = APIRouter(prefix="/api")
 
 
 def _service(request: Request) -> BasicPitchService:
