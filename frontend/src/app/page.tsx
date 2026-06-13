@@ -395,7 +395,7 @@ export default function Home() {
         return response.json();
       });
 
-      const request = await IDKit.request({
+      const request = await IDKit.requestWithInviteCode({
         app_id: echoConfig.worldAppId as `app_${string}`,
         action: echoConfig.worldAction,
         rp_context: {
