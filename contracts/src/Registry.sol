@@ -6,11 +6,11 @@ contract Registry {
     enum Status { SEALED, REVEALED, SIMILAR, REJECTED }
 
     struct Entry {
-        bytes32   commitmentHash;
-        uint256   worldNullifier;
-        uint256   timestamp;
-        Status    status;
-        bytes32[] walrusBlobIds;
+        bytes32 commitmentHash;
+        uint256 worldNullifier;
+        uint256 timestamp;
+        Status  status;
+        bytes32 registryRef;
     }
 
     address public immutable creAddress;
@@ -39,9 +39,9 @@ contract Registry {
     }
 
     function registerTrack(
-        uint256   nullifier,
-        bytes32   commitmentHash,
-        bytes32[] calldata walrusBlobIds
+        uint256 nullifier,
+        bytes32 commitmentHash,
+        bytes32 registryRef
     ) external returns (bytes32 trackId) {
         if (usedNullifiers[nullifier]) revert NullifierAlreadyUsed();
         usedNullifiers[nullifier] = true;
@@ -53,7 +53,7 @@ contract Registry {
             worldNullifier: nullifier,
             timestamp:      block.timestamp,
             status:         Status.SEALED,
-            walrusBlobIds:  walrusBlobIds
+            registryRef:    registryRef
         });
 
         artistTracks[msg.sender].push(trackId);

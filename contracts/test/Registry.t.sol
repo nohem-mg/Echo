@@ -11,18 +11,17 @@ contract RegistryTest is Test {
     address hacker = makeAddr("hacker");
     address cre = makeAddr("cre");
 
-    uint256 nullifier = 123456789;
-    bytes32 commitment = keccak256("track-commitment");
-    bytes32[] blobIds;
+    uint256 nullifier   = 123456789;
+    bytes32 commitment  = keccak256("track-commitment");
+    bytes32 registryRef = keccak256("registry-ref");
 
     function setUp() public {
         registry = new Registry(cre);
-        blobIds.push(keccak256(abi.encodePacked("blob1")));
     }
 
     function _register(address user) internal returns (bytes32) {
         vm.prank(user);
-        return registry.registerTrack(nullifier, commitment, blobIds);
+        return registry.registerTrack(nullifier, commitment, registryRef);
     }
 
     function test_registerTrack_success() public {
@@ -38,7 +37,7 @@ contract RegistryTest is Test {
         _register(artist);
         vm.prank(hacker);
         vm.expectRevert(Registry.NullifierAlreadyUsed.selector);
-        registry.registerTrack(nullifier, keccak256("other"), blobIds);
+        registry.registerTrack(nullifier, keccak256("other"), registryRef);
     }
 
     function test_CRECallback_wrongCaller_reverts() public {
