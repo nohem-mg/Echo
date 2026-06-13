@@ -66,8 +66,9 @@
 
 ### backend/ — Express / Next.js / Python
 
-- Store MIDI sequences encrypted in PostgreSQL. Do not use Walrus.
-- `registryRef` passed to `registerTrack` must be `keccak256` of the MIDI entry's primary key in the DB.
+- Store private registry tracks and melodic intervals in PostgreSQL (`registry-db` service) instead of Walrus.
+- `registryRef` passed to `registerTrack` must be `keccak256(track_id)`.
+- Database access: Schema is managed by the database container itself; applications perform data access only. Direct database access is restricted to the similarity service API (`POST /api/registry` and `POST /api/compare/private`); the CRE does not connect to the database.
 - `commitmentHash` must be computed as `keccak256(abi.encodePacked(fingerprint, profileJSON))` before calling `registerTrack`.
 - World ID proof validation: call `POST /api/v4/verify/{rp_id}` on the Developer Portal before passing the nullifier to the frontend.
 - Never return confidence scores below 50 % from `/api/check/public` — filter them out before responding.
