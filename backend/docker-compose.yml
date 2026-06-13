@@ -33,3 +33,38 @@ services:
       - path: ./services/acrcloud-service/.env
         required: false
     restart: unless-stopped
+
+  midi-similarity-service:
+    build:
+      context: .
+      dockerfile: services/midi-similarity-service/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      # Private registry; overrides any .env. Points at the compose Postgres service.
+      ECHO_MIDI_DATABASE_URL: postgresql://echo:echo@registry-db:5432/echo
+    env_file:
+      - path: ./services/midi-similarity-service/.env
+        required: false
+    depends_on:
+      registry-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  registry-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: echo
+      POSTGRES_PASSWORD: echo
+      POSTGRES_DB: echo
+    volumes:
+      - registry-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U echo -d echo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  registry-data:
