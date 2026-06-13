@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createPublicClient, http, isAddress, parseEther, toHex } from "viem";
 import { sepolia } from "viem/chains";
+import { confirmFlowPayment, FlowStoreError, markFlowError } from "@/lib/flow-store";
 import type { PaymentConfirmRequest } from "@/lib/types";
 
 const DEFAULT_RECEIVER = "0x0000000000000000000000000000000000000000";
@@ -11,10 +12,16 @@ const publicClient = createPublicClient({
   transport: http(process.env.SEPOLIA_RPC_URL),
 });
 
+export const runtime = "nodejs";
+
 export async function POST(request: Request): Promise<Response> {
   const body = (await request.json().catch(() => ({}))) as Partial<PaymentConfirmRequest>;
   const receiver = process.env.NEXT_PUBLIC_FEE_RECEIVER_ADDRESS ?? process.env.PAYMENT_RECEIVER_ADDRESS ?? "";
   const amountEth = process.env.NEXT_PUBLIC_FLOW_FEE_ETH ?? "0.001";
+
+  if (!body.flowId) {
+    return NextResponse.json({ error: "Missing flowId" }, { status: 400 });
+  }
 
   if (!body.hash || !HASH_PATTERN.test(body.hash)) {
     return NextResponse.json({ error: "Missing or invalid transaction hash" }, { status: 400 });
@@ -28,42 +35,63 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Missing NEXT_PUBLIC_FEE_RECEIVER_ADDRESS" }, { status: 500 });
   }
 
-  const [transaction, receipt] = await Promise.all([
-    publicClient.getTransaction({ hash: body.hash }),
-    publicClient.getTransactionReceipt({ hash: body.hash }),
-  ]);
+  try {
+    const [transaction, receipt] = await Promise.all([
+      publicClient.getTransaction({ hash: body.hash }),
+      publicClient.getTransactionReceipt({ hash: body.hash }),
+    ]);
 
-  if (receipt.status !== "success") {
-    return NextResponse.json({ error: "Transaction reverted", hash: body.hash }, { status: 400 });
+    if (receipt.status !== "success") {
+      await markFlowError(body.flowId, "Transaction reverted");
+      return NextResponse.json({ error: "Transaction reverted", hash: body.hash }, { status: 400 });
+    }
+
+    if (transaction.to?.toLowerCase() !== receiver.toLowerCase()) {
+      await markFlowError(body.flowId, "Transaction receiver mismatch");
+      return NextResponse.json({ error: "Transaction receiver mismatch", hash: body.hash }, { status: 400 });
+    }
+
+    if (body.expectedFrom && transaction.from.toLowerCase() !== body.expectedFrom.toLowerCase()) {
+      await markFlowError(body.flowId, "Transaction sender mismatch");
+      return NextResponse.json({ error: "Transaction sender mismatch", hash: body.hash }, { status: 400 });
+    }
+
+    if (transaction.value < parseEther(amountEth)) {
+      await markFlowError(body.flowId, "Transaction value is below the required fee");
+      return NextResponse.json({ error: "Transaction value is below the required fee", hash: body.hash }, { status: 400 });
+    }
+
+    if (transaction.input !== toHex(body.reference)) {
+      await markFlowError(body.flowId, "Payment reference mismatch");
+      return NextResponse.json({ error: "Payment reference mismatch", hash: body.hash }, { status: 400 });
+    }
+
+    const flow = await confirmFlowPayment({
+      flowId: body.flowId,
+      paymentReference: body.reference,
+      txHash: body.hash,
+      walletAddress: transaction.from,
+    });
+
+    return NextResponse.json({
+      success: true,
+      mode: "evm",
+      flow,
+      transaction: {
+        hash: body.hash,
+        from: transaction.from,
+        to: transaction.to,
+        value: transaction.value.toString(),
+        blockNumber: receipt.blockNumber.toString(),
+        chainId: sepolia.id,
+        reference: body.reference,
+      },
+    });
+  } catch (error) {
+    if (error instanceof FlowStoreError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
+    throw error;
   }
-
-  if (transaction.to?.toLowerCase() !== receiver.toLowerCase()) {
-    return NextResponse.json({ error: "Transaction receiver mismatch", hash: body.hash }, { status: 400 });
-  }
-
-  if (body.expectedFrom && transaction.from.toLowerCase() !== body.expectedFrom.toLowerCase()) {
-    return NextResponse.json({ error: "Transaction sender mismatch", hash: body.hash }, { status: 400 });
-  }
-
-  if (transaction.value < parseEther(amountEth)) {
-    return NextResponse.json({ error: "Transaction value is below the required fee", hash: body.hash }, { status: 400 });
-  }
-
-  if (transaction.input !== toHex(body.reference)) {
-    return NextResponse.json({ error: "Payment reference mismatch", hash: body.hash }, { status: 400 });
-  }
-
-  return NextResponse.json({
-    success: true,
-    mode: "evm",
-    transaction: {
-      hash: body.hash,
-      from: transaction.from,
-      to: transaction.to,
-      value: transaction.value.toString(),
-      blockNumber: receipt.blockNumber.toString(),
-      chainId: sepolia.id,
-      reference: body.reference,
-    },
-  });
 }

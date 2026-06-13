@@ -43,6 +43,7 @@ cre/.cre/
 !**/tests/resources/*.mp3
 tmp/
 uploads/
+frontend/.data/
 
 # OS / editor
 .DS_Store
