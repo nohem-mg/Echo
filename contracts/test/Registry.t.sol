@@ -42,7 +42,7 @@ contract RegistryTest is Test {
 
     function test_route_wrongCaller_reverts() public {
         bytes32 trackId = _register(artist);
-        bytes memory report = abi.encode(trackId, uint8(2));
+        bytes memory report = abi.encodePacked(bytes2(0x0001), abi.encode(trackId, uint8(2)));
 
         vm.prank(hacker);
         vm.expectRevert("Only CRE forwarder");
@@ -51,7 +51,7 @@ contract RegistryTest is Test {
 
     function test_route_success() public {
         bytes32 trackId = _register(artist);
-        bytes memory report = abi.encode(trackId, uint8(2));
+        bytes memory report = abi.encodePacked(bytes2(0x0001), abi.encode(trackId, uint8(2)));
 
         vm.prank(cre);
         bool ok = registry.route(bytes32(0), address(0), address(0), "", report);

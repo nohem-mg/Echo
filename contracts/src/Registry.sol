@@ -64,9 +64,9 @@ contract Registry {
     ) external returns (bool) {
         require(msg.sender == creAddress, "Only CRE forwarder");
 
-        (bytes32 trackId, uint8 verdictRaw) = abi.decode(
-            validatedReport, (bytes32, uint8)
-        );
+        // Skip the 2-byte reportId prepended by the CRE forwarder
+        bytes calldata payload = validatedReport[2:];
+        (bytes32 trackId, uint8 verdictRaw) = abi.decode(payload, (bytes32, uint8));
 
         if (entries[trackId].timestamp == 0) revert TrackNotFound();
 
