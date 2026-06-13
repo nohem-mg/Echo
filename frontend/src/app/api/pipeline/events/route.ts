@@ -77,7 +77,7 @@ export async function POST(request: Request): Promise<Response> {
         registryTxHash: body.registryTxHash,
         registryRef: body.registryRef,
         commitmentHash: body.commitmentHash,
-        reason: body.reason ?? body.report?.verdict ?? "Pipeline blocked",
+        reason: body.reason ?? body.report?.ai_summary ?? "Pipeline blocked",
       });
     } else if (flowStatus === "error") {
       await updatePipelineOutcome(body.flowId, "error", {

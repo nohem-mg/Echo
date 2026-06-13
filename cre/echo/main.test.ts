@@ -84,7 +84,8 @@ describe("fail-fast — Step 2A (ACRCloud >= 95%)", () => {
 
     expect(res.verdict).toBe("REJECTED");
     expect(res.commitmentHash).toBe(INPUT.commitmentHash);
-    expect(res.report).toBeUndefined(); // no partial state
+    expect(res.report?.verdict).toBe("REJECTED");
+    expect(res.report?.similar_tracks[0]?.score).toBe(96);
     expect(calls).not.toContain("report");
     expect(calls).not.toContain("compareCommercial");
   });
@@ -111,7 +112,8 @@ describe("fail-fast — Step 2B (similarity >= 75%)", () => {
     const res = runPipelineWithClient(noop, client, INPUT);
 
     expect(res.verdict).toBe("SIMILAR");
-    expect(res.report).toBeUndefined();
+    expect(res.report?.verdict).toBe("SIMILAR");
+    expect(res.report?.similar_tracks[0]?.score).toBe(81);
     expect(calls).not.toContain("report");
   });
 

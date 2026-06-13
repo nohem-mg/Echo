@@ -42,11 +42,11 @@ export function parseTrackRegisteredTrackId(
     abi: registryContractAbi,
     logs,
     eventName: "TrackRegistered",
-  });
+  }) as Array<{ address: `0x${string}`; args: { trackId?: Hex } }>;
 
   const match = events.find((event) => event.address.toLowerCase() === registryAddress.toLowerCase());
   const trackId = match?.args.trackId;
-  return typeof trackId === "string" ? (trackId as Hex) : undefined;
+  return typeof trackId === "string" ? trackId : undefined;
 }
 
 export async function isTrackRegisteredOnChain(
@@ -61,8 +61,8 @@ export async function isTrackRegisteredOnChain(
     args: [trackId],
   });
 
-  const timestamp = (entry as { timestamp?: bigint }).timestamp ?? 0n;
-  return timestamp > 0n;
+  const timestamp = (entry as { timestamp?: bigint }).timestamp ?? BigInt(0);
+  return timestamp > BigInt(0);
 }
 
 export async function findRegistryTrackIdByCommitment(
@@ -87,7 +87,7 @@ export async function findRegistryTrackIdByCommitment(
     })) as { commitmentHash?: `0x${string}`; timestamp?: bigint };
 
     if (
-      (entry.timestamp ?? 0n) > 0n &&
+      (entry.timestamp ?? BigInt(0)) > BigInt(0) &&
       entry.commitmentHash?.toLowerCase() === commitmentHash.toLowerCase()
     ) {
       return trackId;

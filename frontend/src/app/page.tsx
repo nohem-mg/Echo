@@ -238,6 +238,40 @@ function getBestMatch(report?: EchoReport) {
   return report?.similar_tracks?.reduce((max, match) => Math.max(max, match.score), 0) ?? 0;
 }
 
+function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineStep[]): EchoReport | undefined {
+  if (!flow || flow.status !== "pipeline_blocked") {
+    return undefined;
+  }
+
+  const blocked2a = steps.find((step) => step.stepKey === "02A" && step.status === "blocked");
+  const blocked2b = steps.find((step) => step.stepKey === "02B" && step.status === "blocked");
+  const blockedStep = blocked2a ?? blocked2b;
+  if (!blockedStep) {
+    return undefined;
+  }
+
+  const scoreMatch = blockedStep.meta?.match(/(\d+)%/) ?? blockedStep.reason?.match(/(\d+)%/);
+  const score = scoreMatch ? Number(scoreMatch[1]) : 0;
+  const isPlagiarism = blockedStep.stepKey === "02A";
+
+  return {
+    verdict: isPlagiarism ? "REJECTED" : "SIMILAR",
+    similar_tracks: [
+      {
+        rank: 1,
+        title: blockedStep.reason ?? (isPlagiarism ? "Correspondance ACRCloud" : "Similarité registre privé"),
+        source: isPlagiarism ? "ACRCloud" : "Registre privé",
+        score,
+        melody: score,
+        rhythm: score,
+        structure: score,
+        key: isPlagiarism ? "—" : blockedStep.reason?.slice(0, 12) ?? "—",
+      },
+    ],
+    ai_summary: blockedStep.reason ?? flow.error ?? "Analyse interrompue — aucun seal on-chain.",
+  };
+}
+
 function toBytes32Hex(value: string) {
   let hexValue = value;
 
@@ -302,7 +336,7 @@ export default function Home() {
   const canPay = Boolean(audioName && verification.status === "verified" && verification.flow.id && payment.status !== "pending" && payment.status !== "paid");
   const canStartAnalysis = Boolean(payment.status === "paid" && flow?.id && audioFile && !pipelineStarted && !isStartingPipeline);
   const shouldUseMockReport = Boolean(echoConfig.mockWorldEnabled && flow?.worldMode === "mock");
-  const activeReport = flow?.report ?? (shouldUseMockReport && flow?.status === "pipeline_completed" ? mockReports.CLEAN : undefined);
+  const activeReport = flow?.report ?? buildFallbackBlockedReport(flow, livePipelineSteps) ?? (shouldUseMockReport && flow?.status === "pipeline_completed" ? mockReports.CLEAN : undefined);
   const reportMatches = useMemo(() => normalizeReportMatches(activeReport), [activeReport]);
   const bestReportMatch = getBestMatch(activeReport);
   const hasRegistrySeal = Boolean(flow?.status === "pipeline_completed" && flow.registryTxHash);
@@ -1353,7 +1387,7 @@ export default function Home() {
           badgeText: "STOP - REJECTED",
           badgeClass: "border-[#ff7777]/60 bg-[#ff7777]/10 text-[#ff7777]",
           colorClass: "text-[#ff7777]",
-          showMatches: Boolean(activeReport),
+          showMatches: Boolean(activeReport?.similar_tracks?.length),
           bestMatch,
         };
       }
@@ -1363,7 +1397,7 @@ export default function Home() {
         badgeText: "STOP - SIMILAR",
         badgeClass: "border-[#ffd166]/60 bg-[#ffd166]/10 text-[#ffd166]",
         colorClass: "text-[#ffd166]",
-        showMatches: Boolean(activeReport),
+        showMatches: Boolean(activeReport?.similar_tracks?.length),
         bestMatch,
       };
     }
@@ -1763,6 +1797,18 @@ export default function Home() {
                 ) : null}
               </div>
             </div>
+          ) : flow?.status === "pipeline_blocked" || flow?.status === "error" ? (
+            <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/55">
+              <p className="font-bold text-white/80">
+                {flow.status === "pipeline_blocked" ? "Analyse terminée — aucun seal on-chain" : "Erreur pipeline"}
+              </p>
+              <p className="mt-3 text-sm leading-6">
+                {activeReport?.ai_summary
+                  ?? livePipelineSteps.find((step) => step.status === "blocked")?.reason
+                  ?? flow.error
+                  ?? "Aucune transaction Registry n'a été créée."}
+              </p>
+            </div>
           ) : (
             <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/45">
               {pipelineStarted ? "Verification in progress..." : "No track has been verified yet."}
@@ -1786,10 +1832,23 @@ export default function Home() {
                   This track did not pass the prior-art criteria. Echo has halted the execution to prevent duplicate or plagiarized works from being sealed on-chain.
                 </p>
                 <div className="mt-8 rounded-[8px] border border-[#ff7777]/20 bg-[#ff7777]/10 p-5 text-white/90">
-                  <span className="font-bold text-white">Confidential AI Attestation:</span>
-                  <p className="mt-1 font-mono text-sm">
-                    {livePipelineSteps.find(s => s.status === "blocked")?.reason || "High similarity detected. Registry transaction cancelled."}
+                  <span className="font-bold text-white">Match détecté :</span>
+                  <p className="mt-1 text-sm leading-6">
+                    {activeReport?.similar_tracks?.[0]?.title
+                      ?? livePipelineSteps.find((step) => step.status === "blocked")?.reason
+                      ?? "Similarité élevée détectée."}
                   </p>
+                  {activeReport?.similar_tracks?.[0]?.score ? (
+                    <p className="mt-2 font-mono text-sm text-white/75">
+                      Score {activeReport.similar_tracks[0].score}%
+                      {activeReport.similar_tracks[0].key.startsWith("ISRC")
+                        ? ` · ${activeReport.similar_tracks[0].key}`
+                        : null}
+                    </p>
+                  ) : null}
+                  {activeReport?.ai_summary ? (
+                    <p className="mt-3 font-mono text-xs text-white/60">{activeReport.ai_summary}</p>
+                  ) : null}
                 </div>
               </div>
               <div className="mt-10 font-bold text-white/45 text-sm">

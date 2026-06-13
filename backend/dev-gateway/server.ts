@@ -233,7 +233,12 @@ const proxyCheckPublic = async (audioFile: string) => {
   };
   const matches = body.matches
     .filter((m) => m.confidence_score >= 50)
-    .map((m) => ({ ISRC: m.ISRC ?? "", confidence_score: m.confidence_score }));
+    .map((m) => ({
+      ISRC: m.ISRC ?? "",
+      confidence_score: m.confidence_score,
+      title: m.title,
+      artists: m.artists,
+    }));
   vlog(
     `← check/public OK  raw=${body.matches.length} match(es) ≥50%=${matches.length}`,
     matches.length

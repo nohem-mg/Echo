@@ -40,6 +40,8 @@ export type ConvertResponse = {
 export type AcrMatch = {
   ISRC: string;
   confidence_score: number; // % of matching landmarks
+  title?: string;
+  artists?: string[];
 };
 
 export type CheckPublicResponse = {
@@ -103,8 +105,8 @@ export type SimilarTrack = {
 };
 
 export type ReportResponse = {
-  // Backend decides CLEAN | SIMILAR based on best match (<75% / >=75%).
-  verdict: "CLEAN" | "SIMILAR";
+  // Backend decides CLEAN | SIMILAR; CRE adds REJECTED on fail-fast 2A halt.
+  verdict: "CLEAN" | "SIMILAR" | "REJECTED";
   submitted_track: SubmittedTrack;
   similar_tracks: SimilarTrack[];
   ai_summary: string;

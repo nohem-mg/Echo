@@ -37,6 +37,9 @@ import {
   type PipelineInput,
   type PipelineResult,
   type AgentAttestation,
+  type AcrMatch,
+  type RegistryMatch,
+  type ReportResponse,
 } from "./types";
 
 export type Config = PipelineEventsConfig & {
@@ -83,6 +86,57 @@ const formatMatches2b = (matches: { track_id: string; similarity_score: number }
   matches.length === 0
     ? "none"
     : matches.map((m) => `${m.track_id.slice(0, 10)}…@${m.similarity_score}%`).join(", ");
+
+const formatAcrMatchLabel = (match: AcrMatch): string => {
+  const artists = match.artists?.filter(Boolean).join(", ");
+  if (artists && match.title) {
+    return `${artists} — ${match.title}`;
+  }
+  if (match.title) {
+    return match.title;
+  }
+  if (artists) {
+    return artists;
+  }
+  return match.ISRC ? `ISRC ${match.ISRC}` : "Enregistrement public identifié";
+};
+
+const buildPlagiarismReport = (match: AcrMatch, reason: string): ReportResponse => {
+  const label = formatAcrMatchLabel(match);
+  return {
+    verdict: "REJECTED",
+    similar_tracks: [
+      {
+        rank: 1,
+        title: label,
+        source: "ACRCloud",
+        score: match.confidence_score,
+        melody: match.confidence_score,
+        rhythm: match.confidence_score,
+        structure: match.confidence_score,
+        key: match.ISRC ? `ISRC ${match.ISRC}` : "—",
+      },
+    ],
+    ai_summary: `${reason}. Correspondance acoustique avec « ${label} ».`,
+  };
+};
+
+const buildSimilarRegistryReport = (match: RegistryMatch, reason: string): ReportResponse => ({
+  verdict: "SIMILAR",
+  similar_tracks: [
+    {
+      rank: 1,
+      title: `Track privée ${match.track_id.slice(0, 12)}…`,
+      source: "Registre privé",
+      score: match.similarity_score,
+      melody: match.similarity_score,
+      rhythm: match.similarity_score,
+      structure: match.similarity_score,
+      key: match.track_id.slice(0, 10),
+    },
+  ],
+  ai_summary: `${reason}. Similarité compositionnelle vs registre privé.`,
+});
 
 // Fail-fast halt: returns a terminal verdict with no partial state.
 const halt = (
@@ -201,12 +255,18 @@ export const runPipelineWithClient = (
         reason: `ACRCloud plagiarism ${plagiarism.confidence_score}%`,
       });
       updateStep("02B", { status: "done", progress: 100, meta: `${registryMatches.length} private match(es)` });
-      return halt(
-        input,
-        "REJECTED",
-        `ACRCloud plagiarism ${plagiarism.confidence_score}%`,
-        client.getAgentAttestations(),
-      );
+      return {
+        ...halt(
+          input,
+          "REJECTED",
+          `ACRCloud plagiarism ${plagiarism.confidence_score}%`,
+          client.getAgentAttestations(),
+        ),
+        report: buildPlagiarismReport(
+          plagiarism,
+          `ACRCloud plagiarism ${plagiarism.confidence_score}%`,
+        ),
+      };
     }
 
     // ---- Fail-fast 2B: similar to private registry ----------------------
@@ -220,12 +280,18 @@ export const runPipelineWithClient = (
         meta: `Match: ${similar.similarity_score}%`,
         reason: `private registry match ${similar.similarity_score}%`,
       });
-      return halt(
-        input,
-        "SIMILAR",
-        `private registry match ${similar.similarity_score}%`,
-        client.getAgentAttestations(),
-      );
+      return {
+        ...halt(
+          input,
+          "SIMILAR",
+          `private registry match ${similar.similarity_score}%`,
+          client.getAgentAttestations(),
+        ),
+        report: buildSimilarRegistryReport(
+          similar,
+          `private registry match ${similar.similarity_score}%`,
+        ),
+      };
     }
     updateStep("02A", { status: "done", progress: 100, meta: `${matches.length} public match(es)` });
     updateStep("02B", { status: "done", progress: 100, meta: `${registryMatches.length} private match(es)` });
