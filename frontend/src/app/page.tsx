@@ -30,7 +30,7 @@ import { isAddress, parseEther, toHex } from "viem";
 import { useAccount, useChainId, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt } from "wagmi";
 import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
-import type { EchoPayment, PaymentCreateResponse, WorldVerification } from "@/lib/types";
+import type { EchoFlow, EchoPayment, PaymentCreateResponse, WorldVerification } from "@/lib/types";
 
 type StepState = "idle" | "active" | "done" | "blocked";
 
@@ -172,8 +172,16 @@ function getProofNullifier(result: IDKitResult) {
   return "";
 }
 
+async function createAudioFingerprint(file: File) {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `sha256:${hash}`;
+}
+
 export default function Home() {
   const [audioName, setAudioName] = useState("");
+  const [trackFingerprint, setTrackFingerprint] = useState("");
+  const [flow, setFlow] = useState<EchoFlow | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [verification, setVerification] = useState<WorldVerification>({ status: "idle" });
   const [payment, setPayment] = useState<EchoPayment>({ status: "idle" });
@@ -207,11 +215,11 @@ export default function Home() {
     return "Drop WAV / MP3";
   }, [audioName]);
 
-  const canVerify = Boolean(audioName && verification.status !== "pending");
-  const canPay = Boolean(audioName && verification.status === "verified" && isConnected && payment.status !== "pending" && payment.status !== "paid");
+  const canVerify = Boolean(audioName && trackFingerprint && verification.status !== "pending");
+  const canPay = Boolean(audioName && verification.status === "verified" && verification.flow.id && isConnected && payment.status !== "pending" && payment.status !== "paid");
   const flowStatus = useMemo(() => {
     if (payment.status === "paid") {
-      return `Sepolia fee paid · ${payment.hash.slice(0, 12)}...`;
+      return `Flow ${flow?.id.slice(0, 13) ?? "persisted"} · Sepolia fee paid · ${payment.hash.slice(0, 12)}...`;
     }
 
     if (payment.status === "pending") {
@@ -242,12 +250,16 @@ export default function Home() {
       return "Drop a track to start the seal flow";
     }
 
+    if (!trackFingerprint) {
+      return "Computing local audio fingerprint";
+    }
+
     if (isWorldConfigured()) {
       return "Verify World ID before payment";
     }
 
     return echoConfig.mockWorldEnabled ? "Demo mode enabled" : "World Developer Portal credentials required";
-  }, [audioName, chainId, isConnected, payment, verification]);
+  }, [audioName, chainId, flow?.id, isConnected, payment, trackFingerprint, verification]);
 
   useEffect(() => {
     if (payment.status !== "pending" || !paymentReceiptError) {
@@ -287,6 +299,7 @@ export default function Home() {
     const txHash = pendingPaymentHash;
     const paymentReference = pendingPaymentReference;
     const quoteReference = pendingQuote.reference;
+    const quoteFlowId = pendingQuote.flowId;
     const receiptBlockNumber = paymentReceipt.blockNumber.toString();
     let cancelled = false;
 
@@ -296,6 +309,7 @@ export default function Home() {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            flowId: quoteFlowId,
             hash: txHash,
             reference: paymentReference,
             expectedFrom: address,
@@ -307,6 +321,7 @@ export default function Home() {
         }
 
         const confirmed = (await confirmResponse.json()) as {
+          flow?: EchoFlow;
           transaction?: {
             blockNumber?: string;
           };
@@ -314,6 +329,10 @@ export default function Home() {
 
         if (cancelled) {
           return;
+        }
+
+        if (confirmed.flow) {
+          setFlow(confirmed.flow);
         }
 
         setPayment({
@@ -346,12 +365,28 @@ export default function Home() {
     };
   }, [address, payment.status, paymentReceipt, pendingPaymentHash, pendingPaymentReference, pendingQuote]);
 
-  function handleAudioSelect(event: ChangeEvent<HTMLInputElement>) {
+  async function handleAudioSelect(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     setAudioName(file?.name ?? "");
+    setTrackFingerprint("");
+    setFlow(null);
+    setVerification({ status: "idle" });
     setPipelineStarted(false);
     setPayment({ status: "idle" });
     setPendingQuote(null);
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      setTrackFingerprint(await createAudioFingerprint(file));
+    } catch {
+      setVerification({
+        status: "error",
+        error: "Could not compute local track fingerprint",
+      });
+    }
   }
 
   async function handleVerifyWorld() {
@@ -367,18 +402,33 @@ export default function Home() {
         const response = await fetch("/api/world/verify", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ rp_id: "rp_mock", idkitResponse: mockProof }),
+          body: JSON.stringify({
+            rp_id: "rp_mock",
+            idkitResponse: mockProof,
+            track: {
+              name: audioName,
+              fingerprint: trackFingerprint,
+            },
+          }),
         });
 
         if (!response.ok) {
           throw new Error("Mock verification failed");
         }
 
+        const verified = (await response.json()) as { flow?: EchoFlow };
+
+        if (!verified.flow) {
+          throw new Error("World ID passed, but flow persistence failed");
+        }
+
+        setFlowFromVerification(verified.flow);
         setVerification({
           status: "verified",
           proof: mockProof,
           nullifier: getProofNullifier(mockProof) || "0xmock_nullifier",
           mode: "mock",
+          flow: verified.flow,
         });
         return;
       }
@@ -434,20 +484,33 @@ export default function Home() {
       const verifyResponse = await fetch("/api/world/verify", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rp_id: echoConfig.worldRpId, idkitResponse: proofResult.result }),
+        body: JSON.stringify({
+          rp_id: echoConfig.worldRpId,
+          idkitResponse: proofResult.result,
+          track: {
+            name: audioName,
+            fingerprint: trackFingerprint,
+          },
+        }),
       });
 
       if (!verifyResponse.ok) {
         throw new Error("Backend rejected World ID proof");
       }
 
-      const verified = (await verifyResponse.json()) as { nullifier?: string; mode?: "world" | "mock" };
+      const verified = (await verifyResponse.json()) as { nullifier?: string; mode?: "world" | "mock"; flow?: EchoFlow };
 
+      if (!verified.flow) {
+        throw new Error("World ID passed, but flow persistence failed");
+      }
+
+      setFlowFromVerification(verified.flow);
       setVerification({
         status: "verified",
         proof: proofResult.result,
         nullifier: verified.nullifier ?? getProofNullifier(proofResult.result),
         mode: verified.mode ?? "world",
+        flow: verified.flow,
       });
       setWorldQr(null);
     } catch (error) {
@@ -475,7 +538,11 @@ export default function Home() {
     }
 
     try {
-      const paymentRequest = (await fetch("/api/payments/create", { method: "POST" }).then((response) => {
+      const paymentRequest = (await fetch("/api/payments/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ flowId: verification.flow.id }),
+      }).then((response) => {
         if (!response.ok) {
           throw new Error("Could not create Sepolia payment request");
         }
@@ -487,6 +554,7 @@ export default function Home() {
         throw new Error("Invalid Sepolia fee receiver");
       }
 
+      setFlow(paymentRequest.flow);
       setPendingQuote(paymentRequest);
       setPayment({ status: "pending", reference: paymentRequest.reference });
 
@@ -503,6 +571,20 @@ export default function Home() {
         status: "error",
         error: error instanceof Error ? error.message : "Sepolia payment failed",
       });
+    }
+  }
+
+  function setFlowFromVerification(persistedFlow: EchoFlow) {
+    setFlow(persistedFlow);
+
+    if (persistedFlow.status === "pipeline_started" && persistedFlow.txHash && persistedFlow.paymentReference) {
+      setPayment({
+        status: "paid",
+        reference: persistedFlow.paymentReference,
+        hash: persistedFlow.txHash,
+        mode: "evm",
+      });
+      setPipelineStarted(true);
     }
   }
 
@@ -616,7 +698,15 @@ export default function Home() {
                 type="button"
               >
                 <Fingerprint className="size-5" aria-hidden="true" />
-                {verification.status === "verified" ? "World ID OK" : verification.status === "pending" ? "Verifying..." : audioName ? "Verify World ID" : "Add track first"}
+                {verification.status === "verified"
+                  ? "World ID OK"
+                  : verification.status === "pending"
+                    ? "Verifying..."
+                    : audioName && !trackFingerprint
+                      ? "Hashing..."
+                      : audioName
+                        ? "Verify World ID"
+                        : "Add track first"}
               </button>
               <WalletConnectControl tone="panel" />
               <button

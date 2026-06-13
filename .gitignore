@@ -35,6 +35,7 @@ cre/.cre/
 *.midi
 tmp/
 uploads/
+frontend/.data/
 
 # OS / editor
 .DS_Store

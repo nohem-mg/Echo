@@ -38,6 +38,7 @@ Important variables:
 - `NEXT_PUBLIC_FEE_RECEIVER_ADDRESS`: EVM address receiving the Sepolia fee.
 - `NEXT_PUBLIC_FLOW_FEE_ETH`: native ETH amount required before the flow starts.
 - `SEPOLIA_RPC_URL`: optional server RPC URL for transaction verification; viem uses the public Sepolia RPC fallback if empty.
+- `DATABASE_URL`: durable Postgres connection string for persisted Echo flows. Required on Vercel.
 - `ECHO_ENABLE_MOCK_WORLD` / `NEXT_PUBLIC_ECHO_ENABLE_MOCK_WORLD`: set both to `false` for the real World ID flow. Mock mode is opt-in only.
 
 Check whether the real World config is complete:
@@ -61,12 +62,15 @@ curl http://localhost:3000/api/world/status
 
 - World ID uses IDKit Core 4.x request flow when World env vars are configured.
 - Payment uses `wagmi` `sendTransaction` to send native ETH on Sepolia.
+- The browser computes a local SHA-256 fingerprint for the selected audio file before World ID verification.
+- Successful World ID verification creates or reuses a persisted flow with `nullifierHash`, track name, track fingerprint, and status.
+- Payment references and transaction hashes are attached to the same persisted flow.
 - The backend confirms receipt status, receiver, sender, amount, and reference calldata before starting the UI pipeline.
+- Persistence uses Postgres when `DATABASE_URL` is configured. Local development falls back to `frontend/.data/echo-flows.json`; Vercel requires `DATABASE_URL`.
 - Local browser development only falls back to mock World ID proof when both mock env flags are explicitly set to `true`.
 
 ## Next Integration Anchors
 
 - Replace mock pipeline rows with backend/CRE status streaming.
-- Persist used payment hashes/references server-side before production.
 - Replace mock comparison report data with the final report API.
 - Feed certificate/reveal actions from the deployed registry ABI/address.

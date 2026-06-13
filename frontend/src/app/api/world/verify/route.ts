@@ -1,24 +1,44 @@
 import { NextResponse } from "next/server";
 import type { IDKitResult } from "@worldcoin/idkit-core";
+import { createOrReuseFlow, FlowStoreError } from "@/lib/flow-store";
 import { mockWorldEnabled } from "@/lib/server-env";
 
 type VerifyRequest = {
   rp_id?: string;
   idkitResponse?: IDKitResult;
+  track?: {
+    name?: string;
+    fingerprint?: string;
+  };
 };
 
+export const runtime = "nodejs";
+
 export async function POST(request: Request): Promise<Response> {
-  const { rp_id, idkitResponse } = (await request.json().catch(() => ({}))) as VerifyRequest;
+  const { rp_id, idkitResponse, track } = (await request.json().catch(() => ({}))) as VerifyRequest;
 
   if (!rp_id || !idkitResponse) {
     return NextResponse.json({ error: "Missing rp_id or idkitResponse" }, { status: 400 });
   }
 
   if (mockWorldEnabled() && "nonce" in idkitResponse && idkitResponse.nonce.startsWith("mock-")) {
+    const nullifier = getNullifier(idkitResponse);
+    const flow = await createFlowOrResponse({
+      nullifier,
+      trackName: track?.name,
+      trackFingerprint: track?.fingerprint,
+      mode: "mock",
+    });
+
+    if (flow instanceof Response) {
+      return flow;
+    }
+
     return NextResponse.json({
       success: true,
       mode: "mock",
-      nullifier: getNullifier(idkitResponse),
+      nullifier,
+      flow,
     });
   }
 
@@ -33,10 +53,23 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Verification failed", details: body }, { status: 400 });
   }
 
+  const nullifier = getNullifier(idkitResponse);
+  const flow = await createFlowOrResponse({
+    nullifier,
+    trackName: track?.name,
+    trackFingerprint: track?.fingerprint,
+    mode: "world",
+  });
+
+  if (flow instanceof Response) {
+    return flow;
+  }
+
   return NextResponse.json({
     success: true,
     mode: "world",
-    nullifier: getNullifier(idkitResponse),
+    nullifier,
+    flow,
   });
 }
 
@@ -56,4 +89,35 @@ function getNullifier(result: IDKitResult) {
   }
 
   return "";
+}
+
+async function createFlowOrResponse({
+  nullifier,
+  trackName,
+  trackFingerprint,
+  mode,
+}: {
+  nullifier: string;
+  trackName?: string;
+  trackFingerprint?: string;
+  mode: "world" | "mock";
+}) {
+  if (!trackName || !trackFingerprint) {
+    return undefined;
+  }
+
+  try {
+    return await createOrReuseFlow({
+      nullifierHash: nullifier,
+      trackName,
+      trackFingerprint,
+      worldMode: mode,
+    });
+  } catch (error) {
+    if (error instanceof FlowStoreError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
+    throw error;
+  }
 }
