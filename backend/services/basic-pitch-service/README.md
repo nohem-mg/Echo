@@ -6,7 +6,7 @@ come from raw audio in Step 4; MIDI similarity is a separate service).
 
 ## API
 
-### `POST /convert`
+### `POST /api/convert`
 - **Input**: `multipart/form-data`, `file` field.
 - **Formats**: `wav` (recommended, lossless → better transcription), `mp3`, `flac`, `ogg`, `m4a`.
   Audio is downmixed to mono and resampled to 22 050 Hz by BasicPitch (not configurable).
@@ -56,8 +56,8 @@ service as the pipeline grows.
 
 ```bash
 # Audio -> MIDI conversion (shared fixtures under backend/fixtures/audio/)
-curl -F file=@../../fixtures/audio/arpeggio.wav http://localhost:8001/convert
-curl -F file=@../../fixtures/audio/arpeggio.mp3 http://localhost:8001/convert
+curl -F file=@../../fixtures/audio/arpeggio.wav http://localhost:8001/api/convert
+curl -F file=@../../fixtures/audio/arpeggio.mp3 http://localhost:8001/api/convert
 
 curl http://localhost:8001/health     # liveness
 open http://localhost:8001/docs        # interactive OpenAPI / Swagger docs
