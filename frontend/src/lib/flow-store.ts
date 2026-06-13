@@ -276,14 +276,44 @@ export function toSafeErrorMessage(error: unknown) {
 
 function getPool() {
   if (!globalForPg.echoFlowPool) {
+    const connectionString = normalizePostgresConnectionString(process.env.DATABASE_URL);
+
     globalForPg.echoFlowPool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_URL?.includes("localhost") ? false : { rejectUnauthorized: false },
+      connectionString,
+      ssl: shouldUsePostgresSsl(connectionString) ? { rejectUnauthorized: false } : false,
       max: 3,
     });
   }
 
   return globalForPg.echoFlowPool;
+}
+
+function normalizePostgresConnectionString(connectionString: string | undefined) {
+  if (!connectionString) {
+    return connectionString;
+  }
+
+  try {
+    const url = new URL(connectionString);
+
+    // pg-connection-string can let sslmode override the explicit ssl object.
+    // Keep TLS controlled by the Pool config so Vercel/self-signed chains work.
+    for (const key of ["sslmode", "sslcert", "sslkey", "sslrootcert"]) {
+      url.searchParams.delete(key);
+    }
+
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
+}
+
+function shouldUsePostgresSsl(connectionString: string | undefined) {
+  if (!connectionString) {
+    return false;
+  }
+
+  return !connectionString.includes("localhost") && !connectionString.includes("127.0.0.1");
 }
 
 async function ensurePostgresSchema() {
