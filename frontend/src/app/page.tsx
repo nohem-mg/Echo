@@ -389,6 +389,14 @@ export default function Home() {
     }
   }
 
+  async function handleCopyFlowId() {
+    if (!flow?.id) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(flow.id);
+  }
+
   async function handleVerifyWorld() {
     setVerification({ status: "pending" });
 
@@ -731,6 +739,29 @@ export default function Home() {
 
             <div className="mt-4 rounded-[8px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/60">
               <span className="font-bold text-white/80">Flow status:</span> {flowStatus}
+              {flow ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
+                  <span className="font-bold text-white/80">Flow ID:</span>
+                  <code className="max-w-full truncate rounded-full border border-white/10 bg-black/30 px-3 py-1 font-mono text-xs text-[#9ef7c9]">{flow.id}</code>
+                  <button
+                    className="inline-flex min-h-8 items-center gap-1 rounded-full border border-white/15 px-3 text-xs font-bold text-white/70 transition hover:border-[#f59abd] hover:text-[#f59abd]"
+                    onClick={handleCopyFlowId}
+                    type="button"
+                  >
+                    <Copy className="size-3.5" aria-hidden="true" />
+                    Copy
+                  </button>
+                  <a
+                    className="inline-flex min-h-8 items-center gap-1 rounded-full border border-white/15 px-3 text-xs font-bold text-white/70 transition hover:border-[#8fd5ff] hover:text-[#8fd5ff]"
+                    href={`/api/flows/${flow.id}`}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    API
+                    <ExternalLink className="size-3.5" aria-hidden="true" />
+                  </a>
+                </div>
+              ) : null}
               {verification.status === "error" ? <span className="mt-1 block text-[#ff7777]">{verification.error}</span> : null}
               {payment.status === "error" ? <span className="mt-1 block text-[#ff7777]">{payment.error}</span> : null}
             </div>
