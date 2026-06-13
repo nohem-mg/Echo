@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { put } from "@vercel/blob";
 import { NextResponse } from "next/server";
+import { blobPutOptions, hasVercelBlobStorage } from "@/lib/blob-storage";
 import { createTrackId, FlowStoreError, getFlow, getTrackForFlow, initializePipeline, saveTrackUpload, toSafeErrorMessage } from "@/lib/flow-store";
 import type { EchoFlow, TrackUploadResponse } from "@/lib/types";
 
@@ -239,13 +240,8 @@ async function storeAudioBlob({
 }) {
   const pathname = `echo/tracks/${flowId}/${trackId}${extension}`;
 
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
-    const blob = await put(pathname, buffer, {
-      access: "private",
-      allowOverwrite: false,
-      contentType,
-      token: process.env.BLOB_READ_WRITE_TOKEN,
-    });
+  if (hasVercelBlobStorage()) {
+    const blob = await put(pathname, buffer, blobPutOptions(contentType));
 
     return {
       storageProvider: "vercel_blob" as const,
@@ -255,7 +251,10 @@ async function storeAudioBlob({
   }
 
   if (process.env.VERCEL) {
-    throw new FlowStoreError("Missing BLOB_READ_WRITE_TOKEN. Vercel needs Blob storage for audio uploads.", 500);
+    throw new FlowStoreError(
+      "Missing BLOB_STORE_ID. Connect echo-uploads to this Vercel project (Storage → Connect to Project).",
+      500,
+    );
   }
 
   await fs.mkdir(LOCAL_UPLOAD_DIR, { recursive: true });

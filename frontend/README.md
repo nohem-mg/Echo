@@ -39,7 +39,8 @@ Important variables:
 - `NEXT_PUBLIC_FLOW_FEE_ETH`: native ETH amount required before the flow starts.
 - `SEPOLIA_RPC_URL`: optional server RPC URL for transaction verification after the wallet returns a hash. Payment signing itself uses the connected wallet provider.
 - `DATABASE_URL`: durable Postgres connection string for persisted Echo flows. Required on Vercel.
-- `BLOB_READ_WRITE_TOKEN`: Vercel Blob read/write token for production audio uploads. Required on Vercel.
+- `BLOB_STORE_ID`: added automatically when a Blob store is connected to the project on Vercel (OIDC auth at runtime). Required for production uploads unless you use a static token.
+- `BLOB_READ_WRITE_TOKEN`: optional static read/write token (local `vercel env pull` or legacy setups). On Vercel deployments, OIDC + `BLOB_STORE_ID` is enough.
 - `MAX_AUDIO_UPLOAD_MB`: optional server upload limit for `/api/tracks/upload`; defaults to `4`.
 - `ECHO_ENABLE_MOCK_WORLD` / `NEXT_PUBLIC_ECHO_ENABLE_MOCK_WORLD`: set both to `false` for the real World ID flow. Mock mode is opt-in only.
 - `ECHO_PIPELINE_SECRET`: server-only bearer secret accepted by `/api/pipeline/events` for backend/CRE pipeline updates.
