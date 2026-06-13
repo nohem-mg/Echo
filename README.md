@@ -8,8 +8,8 @@ Preuve d'antériorité musicale **trustless, vérifiable, confidentielle et rés
 
 | Dossier | Responsable | Stack | Rôle |
 | --- | --- | --- | --- |
-| [`frontend/`](./frontend) | Marius | Next.js 14 + wagmi + Tailwind | Upload track, World ID, pipeline live, rapport, certificat SEALED |
-| [`contracts/`](./contracts) | Cyriac | Foundry (Solidity) | `Registry` + intégration World Router (Base Sepolia) |
+| [`frontend/`](./frontend) | Marius | Next.js + Tailwind + World MiniKit | Upload track, World ID, paiement World App, pipeline live, rapport, certificat SEALED |
+| [`contracts/`](./contracts) | Cyriac | Foundry (Solidity) | `Registry` + intégration World Router (Base Sepolia ou World Chain Sepolia) |
 | [`cre/`](./cre) | Nohem | Chainlink CRE SDK (TypeScript) | Workflow DAG 4 steps, parallélisation, callback on-chain |
 | [`backend/`](./backend) | GAGEXCM | Next.js API / Express + Python | BasicPitch, ACRCloud, algo MIDI, Walrus, Unlink |
 | [`docs/`](./docs) | — | Markdown | Documentation technique + répartition des tâches |
@@ -36,7 +36,19 @@ cp .env.example .env   # remplir les clés
 
 ## Stack
 
-World ID + AgentKit · Chainlink CRE + Confidential AI · Unlink SDK · Walrus (Sui) · Base Sepolia · x402
+World ID + World App MiniKit Pay · AgentKit · Chainlink CRE + Confidential AI · Unlink SDK · Walrus (Sui) · Base Sepolia / World Chain Sepolia · x402
+
+## Décision produit — paiement utilisateur
+
+Le MVP ne doit pas exposer MetaMask comme prérequis utilisateur. Le flow cible est :
+
+1. L'artiste ouvre Echo dans World App.
+2. Il vérifie son humanité via World ID.
+3. Il paie le lancement du pipeline avec World App MiniKit Pay.
+4. Le backend vérifie le paiement côté serveur avant de déclencher CRE.
+5. Après verdict `CLEAN`, le Registry est écrit on-chain.
+
+MiniKit Pay retourne des paiements sur `worldchain`. Si le Registry reste sur Base Sepolia pour les tracks sponsors, le backend/CRE agit comme relayer après paiement confirmé. Si on veut une UX entièrement World-native, on déploie aussi le Registry sur World Chain Sepolia.
 
 ## Équipe — CNM Agency
 

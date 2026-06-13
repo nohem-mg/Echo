@@ -1,0 +1,10 @@
+{
+  "name": "echo",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "frontend:lint": "npm --prefix frontend run lint"
+  }
+}

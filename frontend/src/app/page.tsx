@@ -1,6 +1,9 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { IDKit, orbLegacy, type IDKitResult } from "@worldcoin/idkit-core";
+import { MiniKit } from "@worldcoin/minikit-js";
+import { Tokens, tokenToDecimals } from "@worldcoin/minikit-js/commands";
 import {
   ArrowUpRight,
   Check,
@@ -17,9 +20,11 @@ import {
   ShieldCheck,
   Sparkles,
   Upload,
-  Wallet,
+  WalletCards,
   Waves,
 } from "lucide-react";
+import { echoConfig, isWorldConfigured } from "@/lib/config";
+import type { EchoPayment, PaymentCreateResponse, WorldVerification } from "@/lib/types";
 
 type StepState = "idle" | "active" | "done" | "blocked";
 
@@ -89,10 +94,10 @@ const matches = [
   },
 ];
 
-const sponsors = ["World ID", "Chainlink CRE", "Confidential AI", "Unlink", "Walrus", "Base Sepolia"];
+const sponsors = ["World ID", "World App Pay", "Chainlink CRE", "Confidential AI", "Unlink", "Walrus", "Base Sepolia"];
 
-function getStepState(index: number, hasFile: boolean): StepState {
-  if (!hasFile) {
+function getStepState(index: number, hasFile: boolean, pipelineStarted: boolean): StepState {
+  if (!hasFile || !pipelineStarted) {
     return "idle";
   }
 
@@ -119,9 +124,50 @@ function scoreTone(score: number) {
   return "text-[#9ef7c9]";
 }
 
+function createMockProof(action: string): IDKitResult {
+  return {
+    protocol_version: "3.0",
+    nonce: `mock-${crypto.randomUUID()}`,
+    action,
+    environment: "staging",
+    user_presence_completed: true,
+    responses: [
+      {
+        identifier: "orb",
+        signal_hash: "0xmock_signal",
+        proof: "0xmock_proof",
+        merkle_root: "0xmock_root",
+        nullifier: `0x${crypto.randomUUID().replaceAll("-", "")}`,
+      },
+    ],
+  };
+}
+
+function getProofNullifier(result: IDKitResult) {
+  const firstResponse = result.responses[0];
+
+  if (!firstResponse) {
+    return "";
+  }
+
+  if ("nullifier" in firstResponse) {
+    return firstResponse.nullifier;
+  }
+
+  if ("session_nullifier" in firstResponse) {
+    return firstResponse.session_nullifier[0] ?? "";
+  }
+
+  return "";
+}
+
 export default function Home() {
   const [audioName, setAudioName] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isWorldApp, setIsWorldApp] = useState(false);
+  const [verification, setVerification] = useState<WorldVerification>({ status: "idle" });
+  const [payment, setPayment] = useState<EchoPayment>({ status: "idle" });
+  const [pipelineStarted, setPipelineStarted] = useState(false);
 
   const selectedLabel = useMemo(() => {
     if (audioName) {
@@ -131,9 +177,205 @@ export default function Home() {
     return "Drop WAV / MP3";
   }, [audioName]);
 
+  const canPay = Boolean(audioName && verification.status === "verified" && payment.status !== "pending");
+  const flowStatus = useMemo(() => {
+    if (payment.status === "paid") {
+      return `Paid ${payment.mode === "mock" ? "demo" : "via World App"} · ${payment.reference.slice(0, 13)}...`;
+    }
+
+    if (payment.status === "pending") {
+      return "Waiting for World App payment confirmation";
+    }
+
+    if (verification.status === "verified") {
+      return `World ID verified ${verification.mode === "mock" ? "in demo mode" : "with proof"}`;
+    }
+
+    if (verification.status === "pending") {
+      return "Waiting for World ID proof";
+    }
+
+    if (!audioName) {
+      return "Drop a track to start the seal flow";
+    }
+
+    if (isWorldConfigured()) {
+      return "Verify World ID before payment";
+    }
+
+    return echoConfig.mockWorldEnabled ? "Demo mode enabled" : "World Developer Portal credentials required";
+  }, [audioName, payment, verification]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setIsWorldApp(MiniKit.isInstalled());
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
   function handleAudioSelect(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     setAudioName(file?.name ?? "");
+    setPipelineStarted(false);
+  }
+
+  async function handleVerifyWorld() {
+    setVerification({ status: "pending" });
+
+    try {
+      if (!isWorldConfigured()) {
+        if (!echoConfig.mockWorldEnabled) {
+          throw new Error("Missing NEXT_PUBLIC_WORLD_APP_ID or NEXT_PUBLIC_WORLD_RP_ID");
+        }
+
+        const mockProof = createMockProof(echoConfig.worldAction);
+        const response = await fetch("/api/world/verify", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ rp_id: "rp_mock", idkitResponse: mockProof }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Mock verification failed");
+        }
+
+        setVerification({
+          status: "verified",
+          proof: mockProof,
+          nullifier: getProofNullifier(mockProof) || "0xmock_nullifier",
+          mode: "mock",
+        });
+        return;
+      }
+
+      const rpSignature = await fetch("/api/world/rp-signature", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: echoConfig.worldAction }),
+      }).then((response) => {
+        if (!response.ok) {
+          throw new Error("Could not create World ID request");
+        }
+
+        return response.json();
+      });
+
+      const request = await IDKit.request({
+        app_id: echoConfig.worldAppId as `app_${string}`,
+        action: echoConfig.worldAction,
+        rp_context: {
+          rp_id: echoConfig.worldRpId,
+          nonce: rpSignature.nonce,
+          created_at: rpSignature.created_at,
+          expires_at: rpSignature.expires_at,
+          signature: rpSignature.sig,
+        },
+        allow_legacy_proofs: true,
+        environment: echoConfig.worldEnvironment,
+      }).preset(orbLegacy({ signal: audioName || "echo-track" }));
+
+      if (request.connectorURI && !isWorldApp) {
+        window.open(request.connectorURI, "_blank", "noopener,noreferrer");
+      }
+
+      const proofResult = await request.pollUntilCompletion({ timeout: 180_000 });
+
+      if (!proofResult.success) {
+        throw new Error(`World ID failed: ${proofResult.error}`);
+      }
+
+      const verifyResponse = await fetch("/api/world/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rp_id: echoConfig.worldRpId, idkitResponse: proofResult.result }),
+      });
+
+      if (!verifyResponse.ok) {
+        throw new Error("Backend rejected World ID proof");
+      }
+
+      const verified = (await verifyResponse.json()) as { nullifier?: string; mode?: "world" | "mock" };
+
+      setVerification({
+        status: "verified",
+        proof: proofResult.result,
+        nullifier: verified.nullifier ?? getProofNullifier(proofResult.result),
+        mode: verified.mode ?? "world",
+      });
+    } catch (error) {
+      setVerification({
+        status: "error",
+        error: error instanceof Error ? error.message : "World ID verification failed",
+      });
+    }
+  }
+
+  async function handlePayAndStart() {
+    if (!canPay) {
+      return;
+    }
+
+    setPayment({ status: "pending" });
+
+    try {
+      const paymentRequest = (await fetch("/api/payments/create", { method: "POST" }).then((response) => {
+        if (!response.ok) {
+          throw new Error("Could not create payment reference");
+        }
+
+        return response.json();
+      })) as PaymentCreateResponse;
+
+      const fallbackPayment = {
+        transactionId: `mock-${crypto.randomUUID()}`,
+        reference: paymentRequest.reference,
+        from: "0x0000000000000000000000000000000000000000",
+        chain: "worldchain",
+        timestamp: new Date().toISOString(),
+      };
+
+      const result =
+        paymentRequest.mode === "mock"
+          ? { executedWith: "fallback", data: fallbackPayment }
+          : await MiniKit.pay<typeof fallbackPayment>({
+              reference: paymentRequest.reference,
+              to: paymentRequest.to,
+              tokens: [
+                {
+                  symbol: Tokens.WLD,
+                  token_amount: tokenToDecimals(paymentRequest.amount, Tokens.WLD).toString(),
+                },
+              ],
+              description: paymentRequest.description,
+              fallback: () => fallbackPayment,
+            });
+
+      const confirmResponse = await fetch("/api/payments/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ payload: result.data }),
+      });
+
+      if (!confirmResponse.ok) {
+        throw new Error("Payment was not confirmed");
+      }
+
+      const confirmed = (await confirmResponse.json()) as { mode?: "world" | "mock" };
+
+      setPayment({
+        status: "paid",
+        reference: paymentRequest.reference,
+        transactionId: result.data.transactionId,
+        mode: confirmed.mode ?? (result.executedWith === "minikit" ? "world" : "mock"),
+      });
+      setPipelineStarted(true);
+    } catch (error) {
+      setPayment({
+        status: "error",
+        error: error instanceof Error ? error.message : "World App payment failed",
+      });
+    }
   }
 
   return (
@@ -151,8 +393,8 @@ export default function Home() {
             <span className="rounded-full border border-white/15 px-4 py-2">Artist prior-art</span>
           </div>
           <button className="inline-flex h-11 items-center gap-2 rounded-full bg-[#fff7cf] px-5 font-bold text-[#050505] transition hover:bg-white">
-            <Wallet className="size-4" aria-hidden="true" />
-            Connect
+            <WalletCards className="size-4" aria-hidden="true" />
+            {isWorldApp ? "World App ready" : "World App"}
           </button>
         </div>
       </div>
@@ -242,19 +484,35 @@ export default function Home() {
             </label>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <button className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#fff7cf] px-5 font-black text-[#050505] transition hover:bg-white">
+              <button
+                className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#fff7cf] px-5 font-black text-[#050505] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={verification.status === "pending"}
+                onClick={handleVerifyWorld}
+                type="button"
+              >
                 <Fingerprint className="size-5" aria-hidden="true" />
-                Verify World ID
+                {verification.status === "verified" ? "World ID OK" : verification.status === "pending" ? "Verifying..." : "Verify World ID"}
               </button>
-              <button className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#f59abd] px-5 font-black text-[#050505] transition hover:bg-[#ffb1ce]">
+              <button
+                className="inline-flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#f59abd] px-5 font-black text-[#050505] transition hover:bg-[#ffb1ce] disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={!canPay}
+                onClick={handlePayAndStart}
+                type="button"
+              >
                 <ShieldCheck className="size-5" aria-hidden="true" />
-                Start seal
+                {payment.status === "paid" ? "Flow paid" : payment.status === "pending" ? "Paying..." : "Pay in World App"}
               </button>
+            </div>
+
+            <div className="mt-4 rounded-[8px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/60">
+              <span className="font-bold text-white/80">Flow status:</span> {flowStatus}
+              {verification.status === "error" ? <span className="mt-1 block text-[#ff7777]">{verification.error}</span> : null}
+              {payment.status === "error" ? <span className="mt-1 block text-[#ff7777]">{payment.error}</span> : null}
             </div>
 
             <div className="mt-6 rounded-[8px] border border-white/10">
               {pipelineSteps.map((step, index) => (
-                <PipelineRow key={step.id} step={step} state={getStepState(index, Boolean(audioName))} />
+                <PipelineRow key={step.id} step={step} state={getStepState(index, Boolean(audioName), pipelineStarted)} />
               ))}
             </div>
           </div>
@@ -349,7 +607,7 @@ export default function Home() {
             <div className="mt-10 grid gap-4 sm:grid-cols-3">
               <CertificateMetric label="Commitment" value="0x8F...21C9" />
               <CertificateMetric label="Timestamp" value="Jun 13, 2026" />
-              <CertificateMetric label="Network" value="Base Sepolia" />
+              <CertificateMetric label="Registry" value={echoConfig.registryChainId === 4801 ? "World Chain Sepolia" : "Base Sepolia"} />
             </div>
             <div className="mt-8 flex flex-wrap gap-3">
               <button className="inline-flex min-h-12 items-center gap-2 rounded-full bg-[#050505] px-5 font-black text-white transition hover:bg-[#202020]">
@@ -372,7 +630,7 @@ export default function Home() {
               <Disc3 className="size-10 text-[#8fd5ff]" aria-hidden="true" />
             </div>
             <div className="space-y-3">
-              {["SEALED entry is private", "Report attached to Walrus blob", "Reveal requires wallet confirmation"].map((item) => (
+              {["SEALED entry is private", "Report attached to Walrus blob", "Reveal gated by World App"].map((item) => (
                 <div className="flex min-h-14 items-center gap-3 rounded-[8px] border border-white/10 px-4" key={item}>
                   <span className="grid size-7 place-items-center rounded-full bg-[#9ef7c9] text-[#050505]">
                     <Check className="size-4" aria-hidden="true" />
