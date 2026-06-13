@@ -75,6 +75,8 @@ const finalizeResult = (
 ): PipelineResult => {
   // ERROR = infrastructure failure; no on-chain state written.
   if (result.verdict === "ERROR") return result;
+  // SIMILAR / REJECTED = fail-fast halt; no partial state written on-chain (AGENTS.md).
+  if (result.verdict === "SIMILAR" || result.verdict === "REJECTED") return result;
 
   const agentAttestations = client.getAgentAttestations();
   if (agentAttestations.length > 0) {
