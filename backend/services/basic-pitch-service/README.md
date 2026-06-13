@@ -55,9 +55,9 @@ service as the pipeline grows.
 ## Calling the API
 
 ```bash
-# Audio -> MIDI conversion (fixtures provided under tests/resources/)
-curl -F file=@tests/resources/arpeggio.wav http://localhost:8001/convert
-curl -F file=@tests/resources/arpeggio.mp3 http://localhost:8001/convert
+# Audio -> MIDI conversion (shared fixtures under backend/fixtures/audio/)
+curl -F file=@../../fixtures/audio/arpeggio.wav http://localhost:8001/convert
+curl -F file=@../../fixtures/audio/arpeggio.mp3 http://localhost:8001/convert
 
 curl http://localhost:8001/health     # liveness
 open http://localhost:8001/docs        # interactive OpenAPI / Swagger docs

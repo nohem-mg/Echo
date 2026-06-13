@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 
 pytest.importorskip("basic_pitch")
 
-RESOURCES = Path(__file__).parent / "resources"
+# Shared audio fixtures, one level above the services (backend/fixtures/audio).
+RESOURCES = Path(__file__).resolve().parents[3] / "fixtures/audio"
 
 
 @pytest.fixture(scope="module")
