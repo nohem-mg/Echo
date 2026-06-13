@@ -39,7 +39,7 @@ export type Config = {
   /** Vault DON secret owner (empty string for simulation). */
   secretsOwner?: string;
   /**
-   * Registry contract address on Base Sepolia (Cyriac deploy).
+   * Registry contract address on Ethereum Sepolia (Cyriac deploy).
    * When set, the DON-signed report is dispatched on-chain for all
    * non-ERROR verdicts. Leave unset to skip the EVM write (simulation mode).
    *
@@ -59,6 +59,7 @@ const halt = (
   agentAttestations?: readonly AgentAttestation[],
 ): PipelineResult => ({
   verdict,
+  trackId: input.trackId,
   commitmentHash: input.commitmentHash,
   reason,
   agentAttestations,
@@ -82,7 +83,7 @@ const finalizeResult = (
   const withAgents: PipelineResult =
     agentAttestations.length > 0 ? { ...result, agentAttestations } : result;
 
-  const { attestation, report } = buildOnChainAttestation(runtime, withAgents, agentAttestations);
+  const { attestation, report } = buildOnChainAttestation(runtime, withAgents);
   runtime.log(`CRE attestation ready for callback (${attestation.slice(0, 18)}…)`);
 
   // Dispatch on-chain when Cyriac provides a real Registry address (not zero / placeholder).
@@ -176,6 +177,7 @@ export const runPipelineWithClient = (
     log(`Final verdict: ${report.verdict}`);
     return {
       verdict: report.verdict,
+      trackId: input.trackId,
       commitmentHash: input.commitmentHash,
       report,
       agentAttestations: client.getAgentAttestations(),

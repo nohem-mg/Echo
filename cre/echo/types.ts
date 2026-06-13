@@ -16,6 +16,8 @@ export type PipelineInput = {
   commitmentHash: string;
   // World ID nullifier (anti-Sybil), passed through to the callback.
   worldNullifier: string;
+  // bytes32 trackId returned by Registry.registerTrack() — passed to receiveCRECallback().
+  trackId: string;
 };
 
 // --------------------------------------------------------------------------
@@ -109,6 +111,7 @@ export type AgentAttestation = {
 // --------------------------------------------------------------------------
 export type PipelineResult = {
   verdict: Verdict;
+  trackId: string;
   commitmentHash: string;
   // Human-readable reason on halt (plagiarism, similar, error).
   reason?: string;
@@ -118,10 +121,10 @@ export type PipelineResult = {
   agentAttestations?: readonly AgentAttestation[];
   /** DON-signed CRE rawReport (hex) for Registry.receiveCRECallback(). */
   attestation?: string;
-  /** Ready-to-send callback when verdict is CLEAN (section 5 wiring). */
+  /** Ready-to-send callback payload (set for all non-ERROR verdicts after dispatch). */
   callback?: {
-    verdict: "CLEAN";
-    commitmentHash: string;
+    trackId: string;
+    verdict: Verdict;
     attestation: string;
   };
 };
@@ -132,3 +135,13 @@ export type PipelineResult = {
 export const THRESHOLD_PLAGIARISM = 95; // 2A: >=95% -> REJECTED (halt)
 export const THRESHOLD_SIMILAR = 75; //    2B: >=75% -> SIMILAR (halt)
 export const THRESHOLD_ACR_MIN = 50; //    2A: <50% -> Step 3 skipped
+
+// --------------------------------------------------------------------------
+// Registry.Status enum (Solidity: SEALED=0, REVEALED=1, SIMILAR=2, REJECTED=3)
+// Maps our pipeline Verdict -> uint8 for receiveCRECallback().
+// --------------------------------------------------------------------------
+export const VERDICT_TO_STATUS: Record<string, number> = {
+  CLEAN: 0,    // SEALED
+  SIMILAR: 2,  // SIMILAR
+  REJECTED: 3, // REJECTED
+};

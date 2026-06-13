@@ -81,41 +81,60 @@ describe("verifyAgentAttestations", () => {
 });
 
 describe("encodeCallbackReportPayload", () => {
-  test("ABI-encodes verdict, commitmentHash, and agent attestations", () => {
+  test("ABI-encodes trackId and uint8 verdict status", () => {
     const result: PipelineResult = {
       verdict: "CLEAN",
-      commitmentHash: `0x${"ab".repeat(32)}`,
-      agentAttestations: [
-        { step: "step1-convert", attestation: "proof-a" },
-        { step: "step4-report", attestation: "proof-b" },
-      ],
+      trackId: `0x${"ab".repeat(32)}`,
+      commitmentHash: `0x${"cd".repeat(32)}`,
     };
 
-    const encoded = encodeCallbackReportPayload(result, result.agentAttestations ?? []);
+    const encoded = encodeCallbackReportPayload(result);
 
     expect(encoded.startsWith("0x")).toBe(true);
     expect(encoded.length).toBeGreaterThan(10);
   });
+
+  test("maps CLEAN->0, SIMILAR->2, REJECTED->3", () => {
+    const base: Omit<PipelineResult, "verdict"> = {
+      trackId: `0x${"ab".repeat(32)}`,
+      commitmentHash: `0x${"cd".repeat(32)}`,
+    };
+    const clean = encodeCallbackReportPayload({ ...base, verdict: "CLEAN" });
+    const similar = encodeCallbackReportPayload({ ...base, verdict: "SIMILAR" });
+    const rejected = encodeCallbackReportPayload({ ...base, verdict: "REJECTED" });
+
+    // All three must differ (different uint8 status bytes).
+    expect(clean).not.toBe(similar);
+    expect(clean).not.toBe(rejected);
+    expect(similar).not.toBe(rejected);
+  });
 });
 
 describe("buildRegistryCallback", () => {
-  test("returns callback payload only for CLEAN with attestation", () => {
+  test("returns callback payload for CLEAN with attestation", () => {
     const result: PipelineResult = {
       verdict: "CLEAN",
+      trackId: "0xtrack",
       commitmentHash: "0xabc",
       attestation: "0xdeadbeef",
     };
 
     expect(buildRegistryCallback(result)).toEqual({
+      trackId: "0xtrack",
       verdict: "CLEAN",
-      commitmentHash: "0xabc",
       attestation: "0xdeadbeef",
     });
   });
 
-  test("returns undefined for halts without attestation", () => {
-    expect(buildRegistryCallback({ verdict: "REJECTED", commitmentHash: "0xabc" })).toBeUndefined();
-    expect(buildRegistryCallback({ verdict: "CLEAN", commitmentHash: "0xabc" })).toBeUndefined();
+  test("returns callback for SIMILAR and REJECTED with attestation", () => {
+    const base = { trackId: "0xtrack", commitmentHash: "0xabc", attestation: "0xproof" };
+    expect(buildRegistryCallback({ ...base, verdict: "SIMILAR" })?.verdict).toBe("SIMILAR");
+    expect(buildRegistryCallback({ ...base, verdict: "REJECTED" })?.verdict).toBe("REJECTED");
+  });
+
+  test("returns undefined for ERROR or missing attestation", () => {
+    expect(buildRegistryCallback({ verdict: "ERROR", trackId: "0x1", commitmentHash: "0xabc" })).toBeUndefined();
+    expect(buildRegistryCallback({ verdict: "CLEAN", trackId: "0x1", commitmentHash: "0xabc" })).toBeUndefined();
   });
 });
 

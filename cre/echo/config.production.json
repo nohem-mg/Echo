@@ -2,5 +2,5 @@
   "backendBaseUrl": "https://echo-backend.example.com",
   "useConfidentialHttp": true,
   "secretsOwner": "",
-  "registryAddress": "0x0000000000000000000000000000000000000000"
+  "registryAddress": "0x152e74c85256f138ae4fa007bfd56917e74b8029"
 }

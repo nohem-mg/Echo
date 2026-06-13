@@ -18,6 +18,7 @@ const INPUT: PipelineInput = {
   audioRef: "walrus://blob/test",
   commitmentHash: "0xabc",
   worldNullifier: "0xdef",
+  trackId: "0x0000000000000000000000000000000000000000000000000000000000000001",
 };
 
 const deferred = <T>(value: T): Deferred<T> => ({ result: () => value });

@@ -17,6 +17,7 @@ import {
 import type { CONFIDENTIAL_HTTP_CLIENT_PB } from "@chainlink/cre-sdk/pb";
 import { encodeAbiParameters, parseAbiParameters, type Hex } from "viem";
 import type { AgentAttestation, PipelineResult } from "./types";
+import { VERDICT_TO_STATUS } from "./types";
 
 type HTTPResponse = CONFIDENTIAL_HTTP_CLIENT_PB.HTTPResponse;
 
@@ -70,15 +71,16 @@ export function requireAgentAttestation(response: HTTPResponse, step: string): A
   return attestation;
 }
 
-/** ABI-encoded payload passed to runtime.report() for on-chain verification. */
-export function encodeCallbackReportPayload(
-  result: PipelineResult,
-  agentAttestations: readonly AgentAttestation[],
-): Hex {
-  const agentValues = agentAttestations.map((a) => a.attestation);
+/**
+ * ABI-encoded payload for runtime.report() — matches receiveCRECallback(bytes32,uint8,bytes).
+ * The Chainlink forwarder decodes (trackId, verdict) from the rawReport body
+ * and calls Registry.receiveCRECallback(trackId, Status(verdict), rawReport).
+ */
+export function encodeCallbackReportPayload(result: PipelineResult): Hex {
+  const status = VERDICT_TO_STATUS[result.verdict] ?? 3; // default REJECTED on unknown
   return encodeAbiParameters(
-    parseAbiParameters("string verdict, bytes32 commitmentHash, string[] agentAttestations"),
-    [result.verdict, result.commitmentHash as Hex, agentValues],
+    parseAbiParameters("bytes32 trackId, uint8 verdict"),
+    [result.trackId as Hex, status],
   );
 }
 
@@ -91,11 +93,10 @@ export function encodeCallbackReportPayload(
 export function buildOnChainAttestation(
   runtime: Runtime<unknown>,
   result: PipelineResult,
-  agentAttestations: readonly AgentAttestation[],
 ): { attestation: string; report: Report } {
-  const encodedPayload = encodeCallbackReportPayload(result, agentAttestations);
-  const report = runtime.report(prepareReportRequest(encodedPayload)).result();
-  return { attestation: bytesToHex(report.rawReport()), report };
+  const encodedPayload = encodeCallbackReportPayload(result);
+  const creReport = runtime.report(prepareReportRequest(encodedPayload)).result();
+  return { attestation: bytesToHex(creReport.rawReport()), report: creReport };
 }
 
 /** Validates that every collected agent attestation is non-empty. */
@@ -108,9 +109,6 @@ export function verifyAgentAttestations(attestations: readonly AgentAttestation[
 }
 
 /** Convenience: encode payload as base64 for runtime.report() debugging. */
-export function encodeCallbackReportPayloadBase64(
-  result: PipelineResult,
-  agentAttestations: readonly AgentAttestation[],
-): string {
-  return hexToBase64(encodeCallbackReportPayload(result, agentAttestations));
+export function encodeCallbackReportPayloadBase64(result: PipelineResult): string {
+  return hexToBase64(encodeCallbackReportPayload(result));
 }
