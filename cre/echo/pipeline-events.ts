@@ -68,6 +68,11 @@ export function createPipelineEventSink<C extends PipelineEventsConfig>(
         return;
       }
 
+      // CRE sim HTTPAction.CallLimit defaults to 15; skip transient "running" pings.
+      if (event.status === "running") {
+        return;
+      }
+
       postPipelineEvent(runtime, config, {
         flowId: input.flowId,
         ...event,

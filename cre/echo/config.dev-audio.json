@@ -3,5 +3,7 @@
   "useConfidentialHttp": false,
   "secretsOwner": "",
   "registryAddress": "0xf011Bb61C7F255571F96FB29cf7b8c7B85FB2Cc0",
-  "writeReportGasLimit": "500000"
+  "writeReportGasLimit": "500000",
+  "pipelineEventsUrl": "http://127.0.0.1:3000/api/pipeline/events",
+  "pipelineEventsSecret": "dev-test"
 }

@@ -51,7 +51,7 @@
     "CallLimit": "50"
   },
   "HTTPAction": {
-    "CallLimit": "15",
+    "CallLimit": "30",
     "CacheAgeLimit": "10m0s",
     "ConnectionTimeout": "90s",
     "RequestSizeLimit": "120kb",

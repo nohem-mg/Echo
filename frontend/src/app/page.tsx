@@ -938,9 +938,9 @@ export default function Home() {
 
       console.log("[Echo] /api/tracks/upload response:", uploadResponse.status);
       if (!uploadResponse.ok) {
-        const errorBody = await uploadResponse.json().catch(() => null);
+        const errorBody = await readApiErrorBody(uploadResponse);
         console.error("[Echo] Upload error:", errorBody);
-        throw new Error(formatApiError(errorBody, "Failed to upload track"));
+        throw new Error(formatApiError(errorBody, `Failed to upload track (HTTP ${uploadResponse.status})`));
       }
 
       const uploadData = (await uploadResponse.json()) as TrackUploadResponse;
@@ -961,9 +961,9 @@ export default function Home() {
 
       console.log("[Echo] /api/pipeline/start response:", startResponse.status);
       if (!startResponse.ok) {
-        const errorBody = await startResponse.json().catch(() => null);
+        const errorBody = await readApiErrorBody(startResponse);
         console.error("[Echo] Pipeline start error:", errorBody);
-        throw new Error(formatApiError(errorBody, "Failed to start pipeline"));
+        throw new Error(formatApiError(errorBody, `Failed to start pipeline (HTTP ${startResponse.status})`));
       }
 
       const startData = (await startResponse.json()) as {
@@ -1672,6 +1672,19 @@ export default function Home() {
       </nav>
     </main>
   );
+}
+
+async function readApiErrorBody(response: Response): Promise<unknown> {
+  const raw = await response.text().catch(() => "");
+  if (!raw.trim()) {
+    return { error: response.statusText || "Empty error response" };
+  }
+
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return { error: raw.trim().slice(0, 240) };
+  }
 }
 
 function formatApiError(body: unknown, fallback: string) {

@@ -387,7 +387,18 @@ export async function saveTrackUpload(input: SaveTrackInput) {
     throw new FlowStoreError("Uploaded audio fingerprint does not match the verified flow", 409);
   }
 
-  if (!["world_verified", "payment_requested", "payment_confirmed", "track_uploaded", "pipeline_started", "pipeline_completed", "pipeline_blocked"].includes(flow.status)) {
+  if (
+    ![
+      "world_verified",
+      "payment_requested",
+      "payment_confirmed",
+      "track_uploaded",
+      "pipeline_started",
+      "pipeline_completed",
+      "pipeline_blocked",
+      "error",
+    ].includes(flow.status)
+  ) {
     throw new FlowStoreError(`Flow cannot upload audio from status ${flow.status}`, 409);
   }
 
@@ -492,6 +503,109 @@ export async function saveTrackUpload(input: SaveTrackInput) {
   return track;
 }
 
+const RETRYABLE_FLOW_STATUSES = new Set<EchoFlowStatus>(["error", "pipeline_blocked", "pipeline_completed"]);
+
+function buildInitialPipelineSteps(flowId: string, trackId: string, now: string): EchoPipelineStep[] {
+  return PIPELINE_STEP_TEMPLATES.map((step, index): EchoPipelineStep => ({
+    id: createPipelineStepId(flowId, step.stepKey),
+    flowId,
+    trackId,
+    stepKey: step.stepKey,
+    label: step.label,
+    detail: step.detail,
+    phase: step.phase,
+    position: index,
+    status: index === 0 ? "running" : "queued",
+    progress: index === 0 ? 10 : 0,
+    meta: index === 0 ? "Queued for backend analysis" : undefined,
+    createdAt: now,
+    updatedAt: now,
+  }));
+}
+
+/** Reset a terminal flow so the same verified track can re-run analysis (dev retry). */
+export async function resetFlowForPipelineRetry(flowId: string, trackId: string) {
+  const flow = await getFlow(flowId);
+  if (!flow) {
+    throw new FlowStoreError("Flow not found", 404);
+  }
+
+  if (!RETRYABLE_FLOW_STATUSES.has(flow.status)) {
+    return getPipelineSteps(flowId);
+  }
+
+  const now = new Date().toISOString();
+  const pipelineSteps = buildInitialPipelineSteps(flowId, trackId, now);
+
+  if (process.env.DATABASE_URL) {
+    await ensurePostgresSchema();
+    const client = await getPool().connect();
+
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM echo_pipeline_steps WHERE flow_id = $1", [flowId]);
+
+      for (const step of pipelineSteps) {
+        await client.query(
+          `
+          INSERT INTO echo_pipeline_steps (
+            id, flow_id, track_id, step_key, label, detail, phase, position, status, progress, meta
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          `,
+          [
+            step.id,
+            step.flowId,
+            step.trackId,
+            step.stepKey,
+            step.label,
+            step.detail,
+            step.phase,
+            step.position,
+            step.status,
+            step.progress,
+            step.meta ?? null,
+          ],
+        );
+      }
+
+      await client.query(
+        `
+        UPDATE echo_flows
+        SET status = 'pipeline_started', error = NULL, report = NULL, updated_at = now()
+        WHERE id = $1
+        `,
+        [flowId],
+      );
+      await client.query("COMMIT");
+      return pipelineSteps;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  assertLocalFileStoreAvailable();
+  const file = await readFlowFile();
+  file.pipelineSteps = file.pipelineSteps.filter((step) => step.flowId !== flowId);
+  file.pipelineSteps.push(...pipelineSteps);
+  file.flows = file.flows.map((storedFlow) =>
+    storedFlow.id === flowId
+      ? {
+          ...storedFlow,
+          status: "pipeline_started",
+          error: undefined,
+          report: undefined,
+          updatedAt: now,
+        }
+      : storedFlow,
+  );
+  await writeFlowFile(file);
+  return pipelineSteps;
+}
+
 export async function initializePipeline(input: InitializePipelineInput) {
   const [flow, track] = await Promise.all([getFlow(input.flowId), getTrackForFlow(input.flowId)]);
 
@@ -503,8 +617,8 @@ export async function initializePipeline(input: InitializePipelineInput) {
     throw new FlowStoreError("Track is not attached to this flow", 404);
   }
 
-  if (flow.status === "error") {
-    throw new FlowStoreError("Cannot start pipeline for a flow in error state", 409);
+  if (RETRYABLE_FLOW_STATUSES.has(flow.status)) {
+    return resetFlowForPipelineRetry(input.flowId, input.trackId);
   }
 
   if (process.env.DATABASE_URL) {
@@ -583,21 +697,7 @@ export async function initializePipeline(input: InitializePipelineInput) {
   }
 
   const now = new Date().toISOString();
-  const pipelineSteps = PIPELINE_STEP_TEMPLATES.map((step, index): EchoPipelineStep => ({
-    id: createPipelineStepId(input.flowId, step.stepKey),
-    flowId: input.flowId,
-    trackId: input.trackId,
-    stepKey: step.stepKey,
-    label: step.label,
-    detail: step.detail,
-    phase: step.phase,
-    position: index,
-    status: index === 0 ? "running" : "queued",
-    progress: index === 0 ? 10 : 0,
-    meta: index === 0 ? "Queued for backend analysis" : undefined,
-    createdAt: now,
-    updatedAt: now,
-  }));
+  const pipelineSteps = buildInitialPipelineSteps(input.flowId, input.trackId, now);
 
   file.pipelineSteps.push(...pipelineSteps);
   file.flows = file.flows.map((storedFlow) => {
