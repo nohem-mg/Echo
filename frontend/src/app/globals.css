@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+:root {
+  --background: #050505;
+  --foreground: #f8f6ee;
+  --font-display: var(--font-space);
+  --font-serif: var(--font-instrument);
+  --font-hand: var(--font-marker);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-space);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+  letter-spacing: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-width: 320px;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-space), Arial, Helvetica, sans-serif;
+}
+
+button,
+a,
+label {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+}
+
+::selection {
+  background: #f59abd;
+  color: #050505;
+}
+
+.font-display {
+  font-family: var(--font-display), Arial, Helvetica, sans-serif;
+}
+
+.font-serif {
+  font-family: var(--font-serif), Georgia, serif;
+}
+
+.font-hand {
+  font-family: var(--font-hand), "Comic Sans MS", cursive;
+}
+
+.noise-layer {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.18;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.16) 1px, transparent 0),
+    linear-gradient(90deg, rgba(245, 154, 189, 0.08), rgba(158, 247, 201, 0.06), rgba(143, 213, 255, 0.05));
+  background-size:
+    18px 18px,
+    100% 100%;
+  mask-image: linear-gradient(to bottom, black 0%, transparent 90%);
+}
+
+.halftone {
+  background-image: radial-gradient(circle, #f8f6ee 1.5px, transparent 1.5px);
+  background-size: 10px 10px;
+  transform: rotate(-8deg);
+}
+
+.starburst {
+  clip-path: polygon(
+    50% 0%,
+    58% 13%,
+    72% 6%,
+    74% 22%,
+    90% 20%,
+    84% 36%,
+    100% 45%,
+    86% 55%,
+    94% 70%,
+    78% 71%,
+    80% 88%,
+    63% 82%,
+    50% 100%,
+    38% 83%,
+    22% 91%,
+    23% 73%,
+    6% 74%,
+    15% 58%,
+    0% 48%,
+    15% 38%,
+    7% 22%,
+    25% 24%,
+    29% 7%,
+    42% 14%
+  );
+}
+
+.vinyl {
+  background:
+    radial-gradient(circle at center, transparent 0 21%, rgba(255, 255, 255, 0.08) 21% 22%, transparent 22% 100%),
+    repeating-radial-gradient(circle at center, #171717 0 3px, #0b0b0b 4px 8px);
+  box-shadow: inset 0 0 40px rgba(255, 255, 255, 0.06), 0 28px 70px rgba(0, 0, 0, 0.35);
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+.marquee {
+  animation: marquee 26s linear infinite;
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .animate-spin-slow,
+  .marquee {
+    animation: none;
+  }
+}
