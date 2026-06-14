@@ -9,10 +9,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ECHO_SC_", env_file=".env")
 
     # --- SoundCloud app credentials (from https://soundcloud.com/you/apps) ---
-    # Used only to validate the client origin; the actual upload is authorised
-    # with the artist's OAuth2 access_token supplied per request.
+    # Used only to refresh a supplied or configured user token.
     client_id: str = ""
     client_secret: str = ""
+
+    # Optional server-side token pair for the post-SEAL publish button. Request
+    # metadata can still override these values per upload.
+    access_token: str = ""
+    refresh_token: str = ""
 
     # --- Upload bounds (validated BEFORE the upstream call) ---
     allowed_extensions: tuple[str, ...] = ("wav", "mp3", "flac", "ogg", "aiff", "m4a")

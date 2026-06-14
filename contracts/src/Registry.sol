@@ -20,6 +20,7 @@ contract Registry {
 
     mapping(bytes32  => Entry)     public entries;
     mapping(address  => bytes32[]) public artistTracks;
+    mapping(bytes32  => bool)      public commitmentRegistered;
 
     event TrackRegistered(address indexed artist, bytes32 indexed trackId, bytes32 commitmentHash, uint256 timestamp);
     event StatusUpdated(bytes32 indexed trackId, Status status);
@@ -29,6 +30,7 @@ contract Registry {
     error NotArtist();
     error InvalidStatus();
     error InvalidForwarder();
+    error TrackAlreadyRegistered();
 
     constructor(address _creAddress) {
         creAddress = _creAddress;
@@ -39,6 +41,9 @@ contract Registry {
         bytes32 commitmentHash,
         bytes32 registryRef
     ) external returns (bytes32 trackId) {
+        if (commitmentRegistered[commitmentHash]) revert TrackAlreadyRegistered();
+        commitmentRegistered[commitmentHash] = true;
+
         trackId = keccak256(abi.encodePacked(msg.sender, commitmentHash, block.timestamp));
 
         entries[trackId] = Entry({

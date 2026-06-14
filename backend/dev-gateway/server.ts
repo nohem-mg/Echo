@@ -56,7 +56,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const DEV_AUDIO = join(REPO_ROOT, "backend/fixtures/audio/arpeggio.wav");
 const DEFAULT_UPLOAD = join(REPO_ROOT, "backend/fixtures/audio/upload.mp3");
 
-const unlinkRoutes = getUnlinkRouteHandlers();
+type UnlinkRouteHandlers = Record<string, (req: Request) => Promise<Response>>;
 
 const ATTESTATION_HEADER = "x-chainlink-confidential-attestation";
 const attestation = () => `mock-tee-${crypto.randomUUID()}`;
@@ -64,6 +64,26 @@ const attestation = () => `mock-tee-${crypto.randomUUID()}`;
 const vlog = (...args: unknown[]) => {
   if (VERBOSE) console.log("[gateway]", ...args);
 };
+
+async function loadUnlinkRoutes(): Promise<UnlinkRouteHandlers> {
+  if (!process.env.UNLINK_API_KEY?.trim() || !process.env.UNLINK_MNEMONIC?.trim()) {
+    vlog("unlink disabled (UNLINK_API_KEY / UNLINK_MNEMONIC not set)");
+    return {};
+  }
+
+  try {
+    const { getUnlinkRouteHandlers } = await import("./unlink-gateway.ts");
+    return getUnlinkRouteHandlers();
+  } catch (error) {
+    console.warn(
+      "[gateway] Unlink routes disabled:",
+      error instanceof Error ? error.message : String(error),
+    );
+    return {};
+  }
+}
+
+const unlinkRoutes = await loadUnlinkRoutes();
 
 /** CRE sends midiSequence as a JSON string; ConfidentialHTTP may send a parsed object. */
 const normalizeMidiSequence = (raw: string | Record<string, unknown>) =>

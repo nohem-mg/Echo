@@ -46,6 +46,8 @@ export type AcrMatch = {
 
 export type CheckPublicResponse = {
   matches: AcrMatch[];
+  /** Humming / cover fingerprint matches when ACRCloud cover bucket is enabled. */
+  cover_matches?: AcrMatch[];
 };
 
 // --------------------------------------------------------------------------
@@ -54,6 +56,10 @@ export type CheckPublicResponse = {
 export type RegistryMatch = {
   track_id: string;
   similarity_score: number; // true compositional similarity %
+  /** Optional breakdown fields from midi-similarity-service (when returned). */
+  global_overlap?: number;
+  hook?: number;
+  hook_intervals?: number;
 };
 
 export type ComparePrivateResponse = {
@@ -95,20 +101,36 @@ export type SubmittedTrack = {
 export type SimilarTrack = {
   rank: number;
   title: string;
-  source: "ACRCloud" | "Registre privé"; // exact API value — do not translate
+  source: "ACRCloud" | "Private registry"; // exact API value for report rows
   score: number;
-  melody: number;
-  rhythm: number;
-  structure: number;
+  /** undefined = data not available for this analysis step */
+  melody?: number;
+  rhythm?: number;
+  structure?: number;
   key: string;
-  BPM: number;
+  BPM?: number;
+  /** MIDI sub-scores — set for Step 2B registry matches only */
+  global_overlap?: number;
+  hook?: number;
+  hook_intervals?: number;
+};
+
+/** Informational ACRCloud humming/cover hits (below or above blocking threshold). */
+export type PublicReference = {
+  rank: number;
+  title: string;
+  artists?: string[];
+  ISRC?: string;
+  score: number;
+  source: "ACRCloud Cover";
 };
 
 export type ReportResponse = {
   // Backend decides CLEAN | SIMILAR; CRE adds REJECTED on fail-fast 2A halt.
   verdict: "CLEAN" | "SIMILAR" | "REJECTED";
-  submitted_track: SubmittedTrack;
+  submitted_track?: SubmittedTrack;
   similar_tracks: SimilarTrack[];
+  public_references?: PublicReference[];
   ai_summary: string;
 };
 
@@ -152,9 +174,10 @@ export type PipelineResult = {
 // --------------------------------------------------------------------------
 // Fail-fast thresholds (doc §3 — non-negotiable invariants)
 // --------------------------------------------------------------------------
-export const THRESHOLD_PLAGIARISM = 95; // 2A: >=95% -> REJECTED (halt)
-export const THRESHOLD_SIMILAR = 75; //    2B: >=75% -> SIMILAR (halt)
-export const THRESHOLD_ACR_MIN = 50; //    2A: <50% -> Step 3 skipped
+export const THRESHOLD_PLAGIARISM = 95; // 2A: >=95% -> REJECTED (halt, acoustic copy)
+export const THRESHOLD_COVER = 85;     // 2A: >=85% -> REJECTED (halt, humming/cover)
+export const THRESHOLD_SIMILAR = 75;   // 2B: >=75% -> SIMILAR (halt, MIDI composition)
+export const THRESHOLD_ACR_MIN = 50;   // 2A: <50%  -> Step 3 skipped
 
 // --------------------------------------------------------------------------
 // Registry.Status enum (Solidity: SEALED=0, REVEALED=1, SIMILAR=2, REJECTED=3)

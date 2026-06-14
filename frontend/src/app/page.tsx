@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { IDKit, orbLegacy, type IDKitResult } from "@worldcoin/idkit-core";
 import Image from "next/image";
@@ -8,7 +8,9 @@ import QRCode from "qrcode";
 import {
   ArrowUpRight,
   Check,
+  ChevronDown,
   CircleDot,
+  Clock,
   Copy,
   Disc3,
   ExternalLink,
@@ -20,15 +22,18 @@ import {
   QrCode as QrCodeIcon,
   Radio,
   Sparkles,
+  Tag,
   Upload,
   WalletCards,
   Waves,
   X,
 } from "lucide-react";
-import { isAddress, parseEther, toHex, type Abi } from "viem";
-import { useAccount, useChainId, usePublicClient, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { parseEther, toHex, type Abi } from "viem";
+import { useAccount, useChainId, usePublicClient, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
+import escrowAbiJson from "@/lib/abi/LicenseEscrow.json";
+import { useFlowHistory } from "@/lib/use-flow-history";
 import {
   buildFlowCommitmentHash,
   buildFlowRegistryRef,
@@ -58,9 +63,181 @@ type WorldQrState = {
   imageDataUrl: string;
 };
 
+type SoundCloudPublishResponse = {
+  soundcloud_url: string;
+  track_id: number;
+  permalink: string;
+  request_id: string;
+};
+
+type SoundCloudPublishState =
+  | { status: "idle" }
+  | { status: "publishing" }
+  | { status: "published"; response: SoundCloudPublishResponse }
+  | { status: "error"; error: string };
+
 type ReportTableMatch = EchoSimilarTrack & {
   keyLabel: string;
 };
+
+const escrowAbi = escrowAbiJson.abi as Abi;
+const LICENSE_LABELS = ["Sync", "Beat", "Full"] as const;
+const DURATION_LABELS = ["1 an", "Perpétuel"] as const;
+
+function SellRightsModal({
+  trackId,
+  onClose,
+}: {
+  trackId: string;
+  onClose: () => void;
+}) {
+  const [priceInput, setPriceInput] = useState("0.05");
+  const [licenseType, setLicenseType] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [copied, setCopied] = useState(false);
+
+  const { writeContract, data: txHash, isPending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+    hash: txHash,
+    chainId: sepolia.id,
+  });
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    writeContract({
+      address: echoConfig.escrowAddress as `0x${string}`,
+      abi: escrowAbi,
+      functionName: "createListing",
+      args: [trackId as `0x${string}`, parseEther(priceInput || "0"), licenseType, duration],
+      chain: sepolia,
+    });
+  }
+
+  async function handleCopyTrackId() {
+    await navigator.clipboard.writeText(trackId);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  const errorMessage = writeError ? writeError.message.split("\n")[0]?.slice(0, 140) : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="relative w-full max-w-md rounded-[8px] border border-white/15 bg-[#0a0a0a] p-6 text-[#f8f6ee] shadow-2xl">
+        <button onClick={onClose} className="absolute right-4 top-4 text-white/40 hover:text-white/80" type="button">
+          <X className="size-5" />
+        </button>
+
+        <div className="mb-1 flex items-center gap-2">
+          <Tag className="size-4 text-[#f59abd]" />
+          <p className="text-sm uppercase tracking-wider text-white/45">Vendre mes droits</p>
+        </div>
+        <h2 className="font-display text-2xl font-black">Créer un listing</h2>
+
+        <div className="mt-4 rounded-[6px] border border-white/10 bg-white/5 px-3 py-2">
+          <p className="mb-1 text-xs text-white/40">Track ID à partager avec l&apos;acheteur</p>
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate font-mono text-xs text-[#9ef7c9]">{trackId}</code>
+            <button
+              type="button"
+              onClick={handleCopyTrackId}
+              className="shrink-0 rounded-full border border-white/15 px-2 py-1 text-xs text-white/60 transition hover:border-[#f59abd] hover:text-[#f59abd]"
+            >
+              {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+            </button>
+          </div>
+        </div>
+
+        {isSuccess ? (
+          <div className="mt-5 space-y-3">
+            <div className="flex items-center gap-2 rounded-[6px] border border-[#9ef7c9]/30 bg-[#9ef7c9]/10 p-3 text-sm text-[#9ef7c9]">
+              <Check className="size-4 shrink-0" />
+              Listing créé sur Sepolia.
+              {txHash && (
+                <a href={`${echoConfig.registryExplorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer" className="ml-auto flex items-center gap-1 text-xs underline opacity-70">
+                  Voir <ExternalLink className="size-3" />
+                </a>
+              )}
+            </div>
+            <p className="text-center text-xs text-white/40">
+              Partagez le Track ID ci-dessus avec l&apos;acheteur.
+              <br />
+              Il le saisira sur{" "}
+              <a href="/marketplace" className="text-[#f59abd] underline">
+                /marketplace
+              </a>{" "}
+              pour acheter la licence.
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-white/40">Type de licence</label>
+                <div className="relative">
+                  <select
+                    value={licenseType}
+                    onChange={(e) => setLicenseType(Number(e.target.value))}
+                    className="w-full appearance-none rounded-[6px] border border-white/15 bg-black px-3 py-2 text-sm text-white focus:border-[#f59abd]/50 focus:outline-none"
+                  >
+                    {LICENSE_LABELS.map((label, i) => (
+                      <option key={i} value={i}>{label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2 top-2.5 size-4 text-white/30" />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-white/40">Durée</label>
+                <div className="relative">
+                  <select
+                    value={duration}
+                    onChange={(e) => setDuration(Number(e.target.value))}
+                    className="w-full appearance-none rounded-[6px] border border-white/15 bg-black px-3 py-2 text-sm text-white focus:border-[#f59abd]/50 focus:outline-none"
+                  >
+                    {DURATION_LABELS.map((label, i) => (
+                      <option key={i} value={i}>{label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2 top-2.5 size-4 text-white/30" />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-white/40">Prix (ETH Sepolia)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.001"
+                value={priceInput}
+                onChange={(e) => setPriceInput(e.target.value)}
+                className="w-full rounded-[6px] border border-white/15 bg-black px-3 py-2 text-sm text-white focus:border-[#f59abd]/50 focus:outline-none"
+                placeholder="0.05"
+              />
+            </div>
+
+            {errorMessage && (
+              <div className="flex items-start gap-2 rounded-[6px] border border-[#ff7777]/30 bg-[#ff7777]/10 p-3 text-xs text-[#ff7777]">
+                <span className="shrink-0">Erreur :</span>
+                <span className="break-all">{errorMessage}</span>
+                <button type="button" onClick={reset} className="ml-auto shrink-0 opacity-60 hover:opacity-100"><X className="size-3" /></button>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isPending || isConfirming || !priceInput || Number(priceInput) <= 0}
+              className="w-full rounded-[6px] bg-[#f59abd] py-3 text-sm font-semibold text-[#050505] transition hover:opacity-90 disabled:opacity-50"
+            >
+              {isPending || isConfirming ? "En attente de confirmation…" : `Mettre en vente · ${priceInput || "0"} ETH`}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const pipelineSteps = [
   {
@@ -223,19 +400,75 @@ async function createAudioFingerprint(file: File) {
   return `sha256:${hash}`;
 }
 
+function fmtScore(score: number): string {
+  return score % 1 === 0 ? `${score}` : score.toFixed(1);
+}
+
 function normalizeReportMatches(report?: EchoReport): ReportTableMatch[] {
   if (!report?.similar_tracks?.length) {
     return [];
   }
 
-  return report.similar_tracks.map((match) => ({
-    ...match,
-    keyLabel: typeof match.BPM === "number" ? `${match.key} / ${match.BPM}` : match.key,
-  }));
+  return report.similar_tracks.map((match) => {
+    let keyLabel: string;
+    if (typeof match.BPM === "number" && match.BPM > 0) {
+      keyLabel = `${match.key} / ${match.BPM}`;
+    } else if (match.hook_intervals && match.hook_intervals > 0) {
+      keyLabel = `${match.hook_intervals} intv.`;
+    } else {
+      keyLabel = match.key;
+    }
+    return { ...match, keyLabel };
+  });
 }
 
 function getBestMatch(report?: EchoReport) {
   return report?.similar_tracks?.reduce((max, match) => Math.max(max, match.score), 0) ?? 0;
+}
+
+type BlockedMatchDetail = {
+  label?: string;
+  ISRC?: string;
+  title?: string;
+  artists?: string[];
+  score?: number;
+};
+
+function parseBlockedStepDetail(detail?: string): BlockedMatchDetail | undefined {
+  if (!detail || !detail.trim().startsWith("{")) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(detail) as BlockedMatchDetail;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatBlockedMatchLabel(detail?: BlockedMatchDetail, meta?: string): string | undefined {
+  if (detail?.label) {
+    return detail.label;
+  }
+
+  const artists = detail?.artists?.filter(Boolean).join(", ");
+  if (artists && detail?.title) {
+    return `${artists} — ${detail.title}`;
+  }
+  if (detail?.title) {
+    return detail.title;
+  }
+  if (artists) {
+    return artists;
+  }
+  if (detail?.ISRC) {
+    return `ISRC ${detail.ISRC}`;
+  }
+  if (meta && !meta.startsWith("Match:")) {
+    return meta.replace(/\s·\s\d+%$/, "");
+  }
+
+  return undefined;
 }
 
 function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineStep[]): EchoReport | undefined {
@@ -250,26 +483,57 @@ function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineSt
     return undefined;
   }
 
-  const scoreMatch = blockedStep.meta?.match(/(\d+)%/) ?? blockedStep.reason?.match(/(\d+)%/);
-  const score = scoreMatch ? Number(scoreMatch[1]) : 0;
+  const parsedDetail = parseBlockedStepDetail(blockedStep.detail);
+  const scoreMatch =
+    blockedStep.meta?.match(/(\d+)%/) ??
+    blockedStep.reason?.match(/(\d+)%/) ??
+    (parsedDetail?.score ? [`${parsedDetail.score}`, `${parsedDetail.score}`] : null);
+  const score = parsedDetail?.score ?? (scoreMatch ? Number(scoreMatch[1]) : 0);
   const isPlagiarism = blockedStep.stepKey === "02A";
+  const matchLabel =
+    formatBlockedMatchLabel(parsedDetail, blockedStep.meta) ??
+    (isPlagiarism ? "ACRCloud match" : "Private registry similarity");
+  const isrcKey = parsedDetail?.ISRC ? `ISRC ${parsedDetail.ISRC}` : "—";
 
   return {
     verdict: isPlagiarism ? "REJECTED" : "SIMILAR",
     similar_tracks: [
       {
         rank: 1,
-        title: blockedStep.reason ?? (isPlagiarism ? "Correspondance ACRCloud" : "Similarité registre privé"),
-        source: isPlagiarism ? "ACRCloud" : "Registre privé",
+        title: matchLabel,
+        source: isPlagiarism ? "ACRCloud" : "Private registry",
         score,
-        melody: score,
-        rhythm: score,
-        structure: score,
-        key: isPlagiarism ? "—" : blockedStep.reason?.slice(0, 12) ?? "—",
+        key: isPlagiarism ? isrcKey : "MIDI",
       },
     ],
-    ai_summary: blockedStep.reason ?? flow.error ?? "Analyse interrompue — aucun seal on-chain.",
+    ai_summary: isPlagiarism
+      ? `Plagiarism detected (${fmtScore(score)}%) — match with « ${matchLabel} ».`
+      : blockedStep.reason ?? flow.error ?? "Analysis halted — no on-chain seal.",
   };
+}
+
+function resolveActiveReport(
+  flow: EchoFlow | null,
+  steps: EchoPipelineStep[],
+  mockReport?: EchoReport,
+): EchoReport | undefined {
+  if (flow?.report?.similar_tracks?.length) {
+    const primaryTitle = flow.report.similar_tracks[0]?.title ?? "";
+    if (!primaryTitle.startsWith("ACRCloud plagiarism")) {
+      return flow.report;
+    }
+  }
+
+  const fallback = buildFallbackBlockedReport(flow, steps);
+  if (fallback) {
+    return fallback;
+  }
+
+  if (flow?.report) {
+    return flow.report;
+  }
+
+  return mockReport;
 }
 
 function toBytes32Hex(value: string) {
@@ -282,6 +546,56 @@ function toBytes32Hex(value: string) {
   }
 
   return hexValue.padEnd(66, "0").slice(0, 66) as `0x${string}`;
+}
+
+function stripAudioExtension(fileName: string) {
+  return fileName.replace(/\.[^.]+$/, "") || "Echo sealed track";
+}
+
+function requestSoundCloudToken(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    fetch("/api/soundcloud/oauth/start")
+      .then((r) => r.json() as Promise<{ auth_url: string; error?: string }>)
+      .then(({ auth_url, error }) => {
+        if (error || !auth_url) {
+          reject(new Error(error ?? "Failed to get SoundCloud auth URL"));
+          return;
+        }
+
+        const popup = window.open(auth_url, "soundcloud_oauth", "width=600,height=700,noopener=0");
+        if (!popup) {
+          reject(new Error("Popup blocked — please allow popups for this site"));
+          return;
+        }
+
+        const onMessage = (event: MessageEvent) => {
+          if (event.origin !== window.location.origin) return;
+          const data = event.data as { type?: string; access_token?: string; error?: string };
+          if (data.type === "soundcloud_auth_success") {
+            cleanup();
+            resolve(data.access_token ?? "");
+          } else if (data.type === "soundcloud_auth_error") {
+            cleanup();
+            reject(new Error(data.error ?? "SoundCloud authorization failed"));
+          }
+        };
+
+        const checkClosed = setInterval(() => {
+          if (popup.closed) {
+            cleanup();
+            reject(new Error("SoundCloud authorization was cancelled"));
+          }
+        }, 800);
+
+        function cleanup() {
+          clearInterval(checkClosed);
+          window.removeEventListener("message", onMessage);
+        }
+
+        window.addEventListener("message", onMessage);
+      })
+      .catch(reject);
+  });
 }
 
 export default function Home() {
@@ -301,21 +615,26 @@ export default function Home() {
   const [isStartingPipeline, setIsStartingPipeline] = useState(false);
   const [creDisabled, setCreDisabled] = useState(false);
   const [isSealingOnChain, setIsSealingOnChain] = useState(false);
+  const [soundCloudTitle, setSoundCloudTitle] = useState("");
+  const [soundCloudPublish, setSoundCloudPublish] = useState<SoundCloudPublishState>({ status: "idle" });
+  const [sellModalOpen, setSellModalOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const sealAttemptedRef = useRef<string | null>(null);
   const sealInFlightRef = useRef<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewAudioUrlRef = useRef<string | null>(null);
   const { writeContractAsync: writeRegistryContract, isPending: isWritingRegistry } = useWriteContract();
   const { address, isConnected } = useAccount();
+  const { entries: historyEntries, addOrUpdate: addOrUpdateHistory } = useFlowHistory(address);
   const chainId = useChainId();
   const publicClient = usePublicClient({ chainId: sepolia.id });
-  const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
-  const { sendTransactionAsync, isPending: isSendingTransaction } = useSendTransaction();
+  const { switchChain } = useSwitchChain();
 
   const pendingPaymentHash = payment.status === "pending" ? payment.hash : undefined;
   const pendingPaymentReference = payment.status === "pending" ? payment.reference : undefined;
   const {
     data: paymentReceipt,
     error: paymentReceiptError,
-    isLoading: isConfirmingTransaction,
   } = useWaitForTransactionReceipt({
     hash: pendingPaymentHash,
     chainId: sepolia.id,
@@ -336,12 +655,24 @@ export default function Home() {
   const canPay = Boolean(audioName && verification.status === "verified" && verification.flow.id && payment.status !== "pending" && payment.status !== "paid");
   const canStartAnalysis = Boolean(payment.status === "paid" && flow?.id && audioFile && !pipelineStarted && !isStartingPipeline);
   const shouldUseMockReport = Boolean(echoConfig.mockWorldEnabled && flow?.worldMode === "mock");
-  const activeReport = flow?.report ?? buildFallbackBlockedReport(flow, livePipelineSteps) ?? (shouldUseMockReport && flow?.status === "pipeline_completed" ? mockReports.CLEAN : undefined);
+  const activeReport = resolveActiveReport(
+    flow,
+    livePipelineSteps,
+    shouldUseMockReport && flow?.status === "pipeline_completed" ? mockReports.CLEAN : undefined,
+  );
   const reportMatches = useMemo(() => normalizeReportMatches(activeReport), [activeReport]);
+  const publicReferences = useMemo(() => activeReport?.public_references ?? [], [activeReport]);
   const bestReportMatch = getBestMatch(activeReport);
   const hasRegistrySeal = Boolean(flow?.status === "pipeline_completed" && flow.registryTxHash);
+  const isCleanAndSealed = Boolean(hasRegistrySeal && activeReport?.verdict === "CLEAN");
   const certificateTrackId = flow?.registryTrackId;
   const certificateTxHash = flow?.registryTxHash;
+  const canPublishToSoundCloud = Boolean(
+    isCleanAndSealed &&
+    flow?.id &&
+    (soundCloudTitle.trim() || audioName) &&
+    soundCloudPublish.status !== "publishing",
+  );
   const flowStatus = useMemo(() => {
     if (pipelineProgressStatus) {
       return pipelineProgressStatus;
@@ -570,6 +901,167 @@ export default function Home() {
     };
   }, [creDisabled, pipelineStarted, flow?.id]);
 
+  const ensureRegistryWalletReady = useCallback(async () => {
+    if (!echoConfig.registryAddress) {
+      return;
+    }
+
+    if (!isConnected || !address) {
+      throw new Error("Connect your wallet on Sepolia before starting analysis.");
+    }
+
+    if (chainId !== echoConfig.registryChainId) {
+      await switchChain({ chainId: sepolia.id });
+    }
+  }, [address, chainId, isConnected, switchChain]);
+
+  const persistRegistryRegistration = useCallback(
+    async (
+      flowId: string,
+      registryTrackId: `0x${string}`,
+      commitmentHash: `0x${string}`,
+      registryRef: `0x${string}`,
+    ) => {
+      const persistResponse = await fetch("/api/registry/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          flowId,
+          registryTrackId,
+          commitmentHash,
+          registryRef,
+        }),
+      });
+
+      if (!persistResponse.ok) {
+        const errorBody = await readApiErrorBody(persistResponse);
+        throw new Error(formatApiError(errorBody, `Failed to persist Registry track ID (HTTP ${persistResponse.status})`));
+      }
+
+      const persisted = (await persistResponse.json()) as { flow?: EchoFlow };
+      if (!persisted.flow) {
+        throw new Error("Registry registration persisted without returning the updated flow.");
+      }
+
+      return persisted.flow;
+    },
+    [],
+  );
+
+  const registerTrackOnChain = useCallback(
+    async (currentFlow: EchoFlow, uploadTrackId: string) => {
+      if (!echoConfig.registryAddress) {
+        return currentFlow;
+      }
+
+      if (!publicClient) {
+        throw new Error("Sepolia RPC client is not ready yet. Retry in a few seconds.");
+      }
+
+      const registryAddress = echoConfig.registryAddress as `0x${string}`;
+      const commitmentHash = buildFlowCommitmentHash(currentFlow.id, currentFlow.trackFingerprint);
+      const registryRef = buildFlowRegistryRef(uploadTrackId);
+
+      if (currentFlow.registryTrackId) {
+        const alreadyRegistered = await isTrackRegisteredOnChain(
+          publicClient,
+          registryAddress,
+          currentFlow.registryTrackId,
+        );
+        if (alreadyRegistered) {
+          const entry = (await publicClient.readContract({
+            address: registryAddress,
+            abi: registryContractAbi,
+            functionName: "getEntry",
+            args: [currentFlow.registryTrackId],
+          })) as { commitmentHash?: `0x${string}` };
+
+          if (entry.commitmentHash?.toLowerCase() === commitmentHash.toLowerCase()) {
+            return currentFlow;
+          }
+        }
+      }
+
+      await ensureRegistryWalletReady();
+
+      if (!address) {
+        throw new Error("Connect your wallet on Sepolia before starting analysis.");
+      }
+
+      const nullifier = worldNullifierToBigInt(currentFlow.nullifierHash);
+
+      const recoveredTrackId = await findRegistryTrackIdByCommitment(
+        publicClient,
+        registryAddress,
+        address,
+        commitmentHash,
+      );
+      if (recoveredTrackId) {
+        setPipelineProgressStatus("Linking existing on-chain Registry entry...");
+        return persistRegistryRegistration(currentFlow.id, recoveredTrackId, commitmentHash, registryRef);
+      }
+
+      setPipelineProgressStatus("Registering track on Ethereum Sepolia...");
+
+      try {
+        const registerTxHash = await writeRegistryContract({
+          address: registryAddress,
+          abi: registryContractAbi,
+          functionName: "registerTrack",
+          args: [nullifier, commitmentHash, registryRef],
+          chain: sepolia,
+        });
+
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: registerTxHash });
+        if (receipt.status !== "success") {
+          throw new Error(
+            "registerTrack a échoué sur Sepolia. Vérifiez votre wallet et le réseau Sepolia.",
+          );
+        }
+
+        const registryTrackId = parseTrackRegisteredTrackId(receipt.logs, registryAddress);
+        if (!registryTrackId) {
+          throw new Error("registerTrack succeeded but TrackRegistered event was not found.");
+        }
+
+        return persistRegistryRegistration(currentFlow.id, registryTrackId, commitmentHash, registryRef);
+      } catch (error) {
+        // If the contract reverted with TrackAlreadyRegistered, the track is already
+        // owned by a different address — surface a clear message instead of retrying.
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (errorMessage.includes("TrackAlreadyRegistered") || errorMessage.includes("0x")) {
+          const isAlreadyRegisteredRevert =
+            errorMessage.includes("TrackAlreadyRegistered") ||
+            // Foundry/viem encodes custom errors as the 4-byte selector in the message.
+            errorMessage.includes("already registered");
+          if (isAlreadyRegisteredRevert) {
+            throw new Error("This track is already registered by another artist on-chain.");
+          }
+        }
+
+        const retryTrackId = await findRegistryTrackIdByCommitment(
+          publicClient,
+          registryAddress,
+          address,
+          commitmentHash,
+        );
+        if (retryTrackId) {
+          setPipelineProgressStatus("Recovering on-chain Registry track ID...");
+          return persistRegistryRegistration(currentFlow.id, retryTrackId, commitmentHash, registryRef);
+        }
+
+        throw error;
+      }
+    },
+    [
+      address,
+      ensureRegistryWalletReady,
+      persistRegistryRegistration,
+      publicClient,
+      writeRegistryContract,
+    ],
+  );
+
   // After CLEAN analysis: registerTrack (wallet) then CRE onReport seal.
   useEffect(() => {
     if (!flow?.id || flow.status !== "pipeline_completed") {
@@ -660,11 +1152,8 @@ export default function Home() {
     })();
   }, [
     creDisabled,
-    flow?.id,
-    flow?.registryTrackId,
-    flow?.registryTxHash,
-    flow?.report?.verdict,
-    flow?.status,
+    flow,
+    registerTrackOnChain,
   ]);
 
   // Local simulation fallback when the CRE trigger is disabled.
@@ -790,6 +1279,99 @@ export default function Home() {
     };
   }, [pipelineStarted, flow, livePipelineSteps, audioName, trackFingerprint, creDisabled]);
 
+  useEffect(() => {
+    if (flow && address) addOrUpdateHistory(flow);
+  }, [flow, address, addOrUpdateHistory]);
+
+  useEffect(() => {
+    const audio = previewAudioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    const syncPlaying = () => setIsPlaying(!audio.paused && !audio.ended);
+    const handleEnded = () => setIsPlaying(false);
+
+    audio.addEventListener("play", syncPlaying);
+    audio.addEventListener("pause", syncPlaying);
+    audio.addEventListener("ended", handleEnded);
+
+    return () => {
+      audio.removeEventListener("play", syncPlaying);
+      audio.removeEventListener("pause", syncPlaying);
+      audio.removeEventListener("ended", handleEnded);
+    };
+  }, []);
+
+  useEffect(() => {
+    const audio = previewAudioRef.current;
+
+    if (previewAudioUrlRef.current) {
+      URL.revokeObjectURL(previewAudioUrlRef.current);
+      previewAudioUrlRef.current = null;
+    }
+
+    audio?.pause();
+
+    if (!audioFile) {
+      if (audio) {
+        audio.removeAttribute("src");
+        audio.load();
+      }
+      return;
+    }
+
+    const url = URL.createObjectURL(audioFile);
+    previewAudioUrlRef.current = url;
+    if (audio) {
+      audio.src = url;
+      audio.load();
+    }
+
+    return () => {
+      if (previewAudioUrlRef.current) {
+        URL.revokeObjectURL(previewAudioUrlRef.current);
+        previewAudioUrlRef.current = null;
+      }
+    };
+  }, [audioFile]);
+
+  async function handleTogglePreview() {
+    const audio = previewAudioRef.current;
+    if (!audio || !audioFile) {
+      return;
+    }
+
+    if (audio.paused) {
+      try {
+        await audio.play();
+      } catch {
+        setIsPlaying(false);
+      }
+      return;
+    }
+
+    audio.pause();
+  }
+
+  async function restoreFlow(flowId: string) {
+    try {
+      const res = await fetch(`/api/flows/${flowId}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { flow: import("@/lib/types").EchoFlow; pipeline: import("@/lib/types").EchoPipelineStep[] };
+      setFlow(data.flow);
+      setAudioFile(null);
+      setAudioName(data.flow.trackName);
+      setSoundCloudTitle(stripAudioExtension(data.flow.trackName));
+      setLivePipelineSteps(data.pipeline ?? []);
+      setPipelineStarted(true);
+      setVerification({ status: "idle" });
+      setPayment({ status: "idle" });
+      setPendingQuote(null);
+      setHistoryOpen(false);
+    } catch {}
+  }
+
   async function handleAudioFile(file: File) {
     setAudioFile(file);
     setAudioName(file.name);
@@ -803,6 +1385,8 @@ export default function Home() {
     setPipelineProgressStatus("");
     setIsStartingPipeline(false);
     setCreDisabled(false);
+    setSoundCloudTitle(stripAudioExtension(file.name));
+    setSoundCloudPublish({ status: "idle" });
 
     try {
       setTrackFingerprint(await createAudioFingerprint(file));
@@ -1072,142 +1656,6 @@ export default function Home() {
     await startPipelineForFlow(flow.id, audioFile);
   }
 
-  async function ensureRegistryWalletReady() {
-    if (!echoConfig.registryAddress) {
-      return;
-    }
-
-    if (!isConnected || !address) {
-      throw new Error("Connect your wallet on Sepolia before starting analysis.");
-    }
-
-    if (chainId !== echoConfig.registryChainId) {
-      await switchChain({ chainId: sepolia.id });
-    }
-  }
-
-  async function persistRegistryRegistration(
-    flowId: string,
-    registryTrackId: `0x${string}`,
-    commitmentHash: `0x${string}`,
-    registryRef: `0x${string}`,
-  ) {
-    const persistResponse = await fetch("/api/registry/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        flowId,
-        registryTrackId,
-        commitmentHash,
-        registryRef,
-      }),
-    });
-
-    if (!persistResponse.ok) {
-      const errorBody = await readApiErrorBody(persistResponse);
-      throw new Error(formatApiError(errorBody, `Failed to persist Registry track ID (HTTP ${persistResponse.status})`));
-    }
-
-    const persisted = (await persistResponse.json()) as { flow?: EchoFlow };
-    if (!persisted.flow) {
-      throw new Error("Registry registration persisted without returning the updated flow.");
-    }
-
-    return persisted.flow;
-  }
-
-  async function registerTrackOnChain(currentFlow: EchoFlow, uploadTrackId: string) {
-    if (!echoConfig.registryAddress) {
-      return currentFlow;
-    }
-
-    if (!publicClient) {
-      throw new Error("Sepolia RPC client is not ready yet. Retry in a few seconds.");
-    }
-
-    const registryAddress = echoConfig.registryAddress as `0x${string}`;
-    const commitmentHash = buildFlowCommitmentHash(currentFlow.id, currentFlow.trackFingerprint);
-    const registryRef = buildFlowRegistryRef(uploadTrackId);
-
-    if (currentFlow.registryTrackId) {
-      const alreadyRegistered = await isTrackRegisteredOnChain(
-        publicClient,
-        registryAddress,
-        currentFlow.registryTrackId,
-      );
-      if (alreadyRegistered) {
-        const entry = (await publicClient.readContract({
-          address: registryAddress,
-          abi: registryContractAbi,
-          functionName: "getEntry",
-          args: [currentFlow.registryTrackId],
-        })) as { commitmentHash?: `0x${string}` };
-
-        if (entry.commitmentHash?.toLowerCase() === commitmentHash.toLowerCase()) {
-          return currentFlow;
-        }
-      }
-    }
-
-    await ensureRegistryWalletReady();
-
-    if (!address) {
-      throw new Error("Connect your wallet on Sepolia before starting analysis.");
-    }
-
-    const nullifier = worldNullifierToBigInt(currentFlow.nullifierHash);
-
-    const recoveredTrackId = await findRegistryTrackIdByCommitment(
-      publicClient,
-      registryAddress,
-      address,
-      commitmentHash,
-    );
-    if (recoveredTrackId) {
-      setPipelineProgressStatus("Linking existing on-chain Registry entry...");
-      return persistRegistryRegistration(currentFlow.id, recoveredTrackId, commitmentHash, registryRef);
-    }
-
-    setPipelineProgressStatus("Registering track on Ethereum Sepolia...");
-
-    try {
-      const registerTxHash = await writeRegistryContract({
-        address: registryAddress,
-        abi: registryContractAbi,
-        functionName: "registerTrack",
-        args: [nullifier, commitmentHash, registryRef],
-        chain: sepolia,
-      });
-
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: registerTxHash });
-      if (receipt.status !== "success") {
-        throw new Error(
-          "registerTrack a échoué sur Sepolia. Vérifiez votre wallet et le réseau Sepolia.",
-        );
-      }
-
-      const registryTrackId = parseTrackRegisteredTrackId(receipt.logs, registryAddress);
-      if (!registryTrackId) {
-        throw new Error("registerTrack succeeded but TrackRegistered event was not found.");
-      }
-
-      return persistRegistryRegistration(currentFlow.id, registryTrackId, commitmentHash, registryRef);
-    } catch (error) {
-      const retryTrackId = await findRegistryTrackIdByCommitment(
-        publicClient,
-        registryAddress,
-        address,
-        commitmentHash,
-      );
-      if (retryTrackId) {
-        setPipelineProgressStatus("Recovering on-chain Registry track ID...");
-        return persistRegistryRegistration(currentFlow.id, retryTrackId, commitmentHash, registryRef);
-      }
-
-      throw error;
-    }
-  }
-
   async function startPipelineForFlow(flowId: string, file: File) {
     try {
       setIsStartingPipeline(true);
@@ -1232,7 +1680,7 @@ export default function Home() {
 
       const uploadData = (await uploadResponse.json()) as TrackUploadResponse;
       console.log("[Echo] Upload success, track:", uploadData.track?.id, "flow status:", uploadData.flow?.status);
-      let activeFlow = uploadData.flow;
+      const activeFlow = uploadData.flow;
       setFlow(activeFlow);
       setLivePipelineSteps(uploadData.pipeline);
       setPipelineProgressStatus("Starting CRE handoff...");
@@ -1317,6 +1765,51 @@ export default function Home() {
     } catch (error) {
       console.error("On-chain reveal failed:", error);
       setPipelineProgressStatus(`On-chain reveal failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async function handlePublishToSoundCloud() {
+    if (!flow?.id || !isCleanAndSealed) {
+      setSoundCloudPublish({ status: "error", error: "SoundCloud publish opens after a CLEAN Registry seal." });
+      return;
+    }
+
+    const title = soundCloudTitle.trim() || stripAudioExtension(audioName);
+
+    if (!title) {
+      setSoundCloudPublish({ status: "error", error: "Set a title before publishing." });
+      return;
+    }
+
+    setSoundCloudPublish({ status: "publishing" });
+
+    try {
+      const accessToken = await requestSoundCloudToken();
+
+      const response = await fetch("/api/soundcloud/upload", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          flowId: flow.id,
+          title,
+          description: "",
+          privacy: "private",
+          accessToken,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await readApiErrorBody(response);
+        throw new Error(formatApiError(errorBody, `SoundCloud publish failed (HTTP ${response.status})`));
+      }
+
+      const result = (await response.json()) as SoundCloudPublishResponse;
+      setSoundCloudPublish({ status: "published", response: result });
+    } catch (error) {
+      setSoundCloudPublish({
+        status: "error",
+        error: error instanceof Error ? error.message : "SoundCloud publish failed",
+      });
     }
   }
 
@@ -1441,6 +1934,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen overflow-hidden bg-[#050505] text-[#f8f6ee]">
+      <audio ref={previewAudioRef} className="hidden" preload="metadata" />
       <div className="fixed inset-x-0 top-0 z-40 border-b border-white/10 bg-[#050505]/75 backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <a className="flex items-center gap-3" href="#top" aria-label="Echo home">
@@ -1458,18 +1952,18 @@ export default function Home() {
       </div>
 
       <section id="top" className="relative px-4 pb-16 pt-24 sm:px-6 lg:px-8">
-        <div className="noise-layer" aria-hidden="true" />
+        <div className="noise-layer echo-noise-drift" aria-hidden="true" />
         <div className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[1.02fr_0.98fr] lg:items-start">
           <div className="order-2 relative min-h-[640px] overflow-hidden rounded-[8px] border border-white/15 bg-black px-5 py-6 sm:px-8 lg:order-1 lg:px-10">
-            <div className="halftone absolute -left-24 top-16 size-80 opacity-45" aria-hidden="true" />
-            <div className="absolute right-8 top-8 z-10 hidden rotate-6 bg-[#fff7cf] px-6 py-5 text-center text-[#050505] starburst sm:block">
+            <div className="halftone echo-halftone absolute -left-24 top-16 size-80 opacity-45" aria-hidden="true" />
+            <div className="echo-starburst absolute right-8 top-8 z-10 hidden rotate-6 bg-[#fff7cf] px-6 py-5 text-center text-[#050505] starburst sm:block">
               <span className="font-hand text-lg">3 seals free</span>
             </div>
 
             <div className="relative z-10 flex h-full flex-col justify-between gap-10">
               <div>
                 <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-white/70">
-                  <CircleDot className="size-4 text-[#9ef7c9]" aria-hidden="true" />
+                  <CircleDot className="echo-status-pulse size-4 text-[#9ef7c9]" aria-hidden="true" />
                   Human-backed confidential music proof
                 </div>
 
@@ -1484,11 +1978,11 @@ export default function Home() {
               <div className="grid gap-4 sm:grid-cols-[1fr_0.8fr] sm:items-end">
                 <div className="rounded-[8px] border border-white/15 bg-[#080808] p-5">
                   <div className="mb-4 flex items-center justify-between gap-4">
-                    <span className="font-hand text-2xl text-[#fff7cf]">private until reveal</span>
-                    <LockKeyhole className="size-5 text-[#f59abd]" aria-hidden="true" />
+                    <span className="echo-hand-float font-hand text-2xl text-[#fff7cf]">private until reveal</span>
+                    <LockKeyhole className="echo-lock-nudge size-5 text-[#f59abd]" aria-hidden="true" />
                   </div>
                   <p className="max-w-xl text-lg leading-7 text-white/72">
-                    A TEE-attested prior-art record for unreleased music, designed for artists who need proof without public exposure.
+                    Upload your track, run a confidential plagiarism check, and seal a prior-art proof on-chain — reveal it publicly whenever you&apos;re ready.
                   </p>
                 </div>
 
@@ -1500,7 +1994,7 @@ export default function Home() {
           </div>
 
           <div className="order-1 relative rounded-[8px] border border-white/15 bg-[#0a0a0a] p-4 sm:p-6 lg:order-2 lg:p-8">
-            <div className="absolute -right-4 -top-5 rotate-3 rounded-[8px] border border-[#f59abd] bg-[#050505] px-4 py-2 font-hand text-xl text-[#f59abd]">
+            <div className="echo-badge-tilt absolute -right-4 -top-5 rotate-3 rounded-[8px] border border-[#f59abd] bg-[#050505] px-4 py-2 font-hand text-xl text-[#f59abd]">
               artist mode
             </div>
 
@@ -1510,14 +2004,71 @@ export default function Home() {
                 <h2 className="mt-1 font-display text-3xl font-black">Register a track</h2>
               </div>
               <button
-                className="inline-flex h-12 items-center gap-2 rounded-full border border-white/15 px-5 font-bold transition hover:border-[#f59abd] hover:text-[#f59abd]"
-                onClick={() => setIsPlaying((value) => !value)}
+                className={`inline-flex h-12 items-center gap-2 rounded-full border border-white/15 px-5 font-bold transition ${audioFile ? "hover:border-[#f59abd] hover:text-[#f59abd]" : "cursor-not-allowed opacity-40"}`}
+                disabled={!audioFile}
+                onClick={() => void handleTogglePreview()}
+                title={audioFile ? "Play uploaded track" : "Upload a track to preview"}
                 type="button"
               >
                 {isPlaying ? <Pause className="size-4" aria-hidden="true" /> : <Play className="size-4" aria-hidden="true" />}
                 Preview
               </button>
             </div>
+
+            {isConnected && (
+              <div className="mb-4 rounded-[8px] border border-white/10 bg-white/[0.02]">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between px-4 py-3 text-sm font-bold text-white/60 hover:text-white/90 transition-colors"
+                  onClick={() => setHistoryOpen((o) => !o)}
+                >
+                  <span className="flex items-center gap-2">
+                    <Clock className="size-4" />
+                    My tracks {historyEntries.length > 0 ? `(${historyEntries.length})` : ""}
+                  </span>
+                  <ChevronDown className={`size-4 transition-transform ${historyOpen ? "rotate-180" : ""}`} />
+                </button>
+                {historyOpen && (
+                  historyEntries.length === 0 ? (
+                    <p className="border-t border-white/10 px-4 py-4 text-sm text-white/35">
+                      No tracks yet — complete a verification to see your history here.
+                    </p>
+                  ) : (
+                    <ul className="border-t border-white/10 divide-y divide-white/5">
+                      {historyEntries.map((entry) => {
+                        const badge =
+                          entry.verdict === "CLEAN"
+                            ? { label: "CLEAN", cls: "bg-[#9ef7c9]/15 text-[#9ef7c9]" }
+                            : entry.verdict === "SIMILAR"
+                              ? { label: "SIMILAR", cls: "bg-[#ffd166]/15 text-[#ffd166]" }
+                              : entry.verdict === "REJECTED"
+                                ? { label: "REJECTED", cls: "bg-[#ff7777]/15 text-[#ff7777]" }
+                                : { label: "In progress", cls: "bg-white/10 text-white/50" };
+                        const date = new Date(entry.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                        return (
+                          <li key={entry.flowId} className="flex items-center justify-between gap-3 px-4 py-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-bold text-white/85">{entry.trackName}</p>
+                              <p className="text-xs text-white/40">{date}</p>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${badge.cls}`}>{badge.label}</span>
+                              <button
+                                type="button"
+                                className="rounded-full border border-white/15 px-3 py-1 text-xs font-bold text-white/70 hover:border-[#f59abd] hover:text-[#f59abd] transition-colors"
+                                onClick={() => restoreFlow(entry.flowId)}
+                              >
+                                Resume
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )
+                )}
+              </div>
+            )}
 
             <label
               className={`group block cursor-pointer rounded-[8px] border transition-all duration-200 p-6 ${
@@ -1659,7 +2210,11 @@ export default function Home() {
             {[...sponsors, ...sponsors].map((item, index) => (
               <span className="flex items-center gap-8" key={`${item}-${index}`}>
                 {item}
-                <Sparkles className="size-4 text-[#fff7cf]" aria-hidden="true" />
+                <Sparkles
+                  className="echo-sparkle-twinkle size-4 text-[#fff7cf]"
+                  style={{ animationDelay: `${(index % 5) * 0.45}s` }}
+                  aria-hidden="true"
+                />
               </span>
             ))}
           </div>
@@ -1669,7 +2224,9 @@ export default function Home() {
       <section id="pipeline" className="px-4 py-12 sm:px-6 lg:px-8 lg:py-16">
         <div className="mx-auto flex flex-col gap-6 lg:gap-8 w-full max-w-7xl">
           <div>
-            <p className="font-hand text-2xl sm:text-3xl text-[#9ef7c9]">echo, but sealed</p>
+            <p className="echo-hand-float font-hand text-2xl sm:text-3xl text-[#9ef7c9]" style={{ animationDelay: "0.6s" }}>
+              echo, but sealed
+            </p>
             <h2 className="mt-2 sm:mt-4 max-w-3xl font-display text-[clamp(2.5rem,5.5vw,4.2rem)] font-black leading-[0.9]">
               One private run. One public timestamp.
             </h2>
@@ -1705,7 +2262,7 @@ export default function Home() {
                   )}
                   <div className="mt-4 sm:mt-8 lg:mt-3 xl:mt-5 h-2 rounded-full bg-white/10">
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${liveState === "blocked" ? "bg-[#ff7777]" : "bg-[#9ef7c9]"}`}
+                      className={`h-full rounded-full transition-all duration-500 ${liveState === "blocked" ? "bg-[#ff7777]" : liveState === "active" ? "echo-progress-shimmer" : "bg-[#9ef7c9]"}`}
                       style={{ width: progressWidth }}
                     />
                   </div>
@@ -1720,14 +2277,16 @@ export default function Home() {
         <div className="mx-auto w-full max-w-7xl">
           <div className="mb-8 flex flex-wrap items-end justify-between gap-6">
             <div>
-              <p className="font-hand text-3xl text-[#fff7cf]">verdict board</p>
+              <p className="echo-hand-float font-hand text-3xl text-[#fff7cf]" style={{ animationDelay: "0.3s" }}>
+                verdict board
+              </p>
               <h2 className={`mt-3 font-display text-[clamp(2.8rem,6vw,6rem)] font-black leading-[0.9] ${verdictInfo.colorClass}`}>
                 {verdictInfo.title}
               </h2>
               <p className="mt-2 text-white/60 text-lg">{verdictInfo.subtitle}</p>
             </div>
             <div className={`rounded-full border px-5 py-3 font-black ${verdictInfo.badgeClass}`}>
-              {verdictInfo.badgeText} {verdictInfo.bestMatch > 0 ? `· Best match ${verdictInfo.bestMatch}%` : ""}
+              {verdictInfo.badgeText} {verdictInfo.bestMatch > 0 ? `· Best match ${fmtScore(verdictInfo.bestMatch)}%` : ""}
             </div>
           </div>
 
@@ -1738,20 +2297,32 @@ export default function Home() {
                   <div className="min-w-14 border-b border-white/10 p-4">#</div>
                   <div className="min-w-64 border-b border-white/10 p-4">Track</div>
                   <div className="min-w-24 border-b border-white/10 p-4">Global</div>
-                  <div className="min-w-24 border-b border-white/10 p-4">Melody</div>
+                  <div className="min-w-24 border-b border-white/10 p-4 flex items-center gap-1">
+                    Melody
+                    {reportMatches[0]?.global_overlap !== undefined && (
+                      <span className="text-[10px] text-white/30 font-normal">(n-gram)</span>
+                    )}
+                  </div>
                   <div className="min-w-24 border-b border-white/10 p-4">Rhythm</div>
-                  <div className="min-w-24 border-b border-white/10 p-4">Structure</div>
-                  <div className="min-w-28 border-b border-white/10 p-4">Key / BPM</div>
+                  <div className="min-w-24 border-b border-white/10 p-4 flex items-center gap-1">
+                    Hook
+                    {reportMatches[0]?.hook !== undefined && (
+                      <span className="text-[10px] text-white/30 font-normal">(S-W)</span>
+                    )}
+                  </div>
+                  <div className="min-w-28 border-b border-white/10 p-4">
+                    {reportMatches[0]?.hook_intervals !== undefined ? "Phrase len." : "Key / BPM"}
+                  </div>
                   <div className="min-w-32 border-b border-white/10 p-4">Source</div>
                 </div>
                 {reportMatches.map((match) => (
                   <div className="contents" key={match.rank}>
                     <div className="min-w-14 border-b border-white/10 p-4 text-white/55">{match.rank}</div>
                     <div className="min-w-64 border-b border-white/10 p-4 font-bold">{match.title}</div>
-                    <div className={`min-w-24 border-b border-white/10 p-4 font-black ${scoreTone(match.score)}`}>{match.score}%</div>
-                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.melody}%</div>
-                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.rhythm}%</div>
-                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.structure}%</div>
+                    <div className={`min-w-24 border-b border-white/10 p-4 font-black ${scoreTone(match.score)}`}>{fmtScore(match.score)}%</div>
+                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.melody !== undefined ? `${fmtScore(match.melody)}%` : <span className="text-white/25">—</span>}</div>
+                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.rhythm !== undefined ? `${fmtScore(match.rhythm)}%` : <span className="text-white/25">—</span>}</div>
+                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.structure !== undefined ? `${fmtScore(match.structure)}%` : <span className="text-white/25">—</span>}</div>
                     <div className="min-w-28 border-b border-white/10 p-4 text-white/65">{match.keyLabel}</div>
                     <div className="min-w-32 border-b border-white/10 p-4 text-white/65">{match.source}</div>
                   </div>
@@ -1759,6 +2330,32 @@ export default function Home() {
               </div>
               {activeReport?.ai_summary ? (
                 <p className="border-t border-white/10 p-4 text-sm leading-6 text-white/65">{activeReport.ai_summary}</p>
+              ) : null}
+              {publicReferences.length > 0 ? (
+                <div className="border-t border-[#8fd5ff]/20 bg-[#8fd5ff]/5">
+                  <div className="border-b border-[#8fd5ff]/15 px-5 py-4">
+                    <p className="font-hand text-xl text-[#8fd5ff]">public references detected</p>
+                    <p className="mt-1 text-sm text-white/55">
+                      ACRCloud humming — informational signal (cover block threshold: 85%).
+                    </p>
+                  </div>
+                  <div className="divide-y divide-white/10">
+                    {publicReferences.map((reference) => (
+                      <div className="grid gap-3 px-5 py-4 sm:grid-cols-[1fr_auto]" key={`${reference.ISRC ?? reference.title}-${reference.rank}`}>
+                        <div>
+                          <p className="font-bold text-white/90">{reference.title}</p>
+                          {reference.ISRC ? (
+                            <p className="mt-1 font-mono text-xs text-white/45">{reference.ISRC}</p>
+                          ) : null}
+                        </div>
+                        <div className="text-right">
+                          <p className="font-display text-2xl font-black text-[#8fd5ff]">{fmtScore(reference.score)}%</p>
+                          <p className="text-xs text-white/45">{reference.source}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               ) : null}
             </div>
           ) : verdictInfo.showMatches && activeReport ? (
@@ -1800,13 +2397,13 @@ export default function Home() {
           ) : flow?.status === "pipeline_blocked" || flow?.status === "error" ? (
             <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/55">
               <p className="font-bold text-white/80">
-                {flow.status === "pipeline_blocked" ? "Analyse terminée — aucun seal on-chain" : "Erreur pipeline"}
+                {flow.status === "pipeline_blocked" ? "Analysis complete — no on-chain seal" : "Pipeline error"}
               </p>
               <p className="mt-3 text-sm leading-6">
                 {activeReport?.ai_summary
                   ?? livePipelineSteps.find((step) => step.status === "blocked")?.reason
                   ?? flow.error
-                  ?? "Aucune transaction Registry n'a été créée."}
+                  ?? "No Registry transaction was created."}
               </p>
               {flow.error?.includes("Trial épuisé") && (
                 <button 
@@ -1823,6 +2420,7 @@ export default function Home() {
               {pipelineStarted ? "Verification in progress..." : "No track has been verified yet."}
             </div>
           )}
+
         </div>
       </section>
 
@@ -1841,22 +2439,47 @@ export default function Home() {
                   This track did not pass the prior-art criteria. Echo has halted the execution to prevent duplicate or plagiarized works from being sealed on-chain.
                 </p>
                 <div className="mt-8 rounded-[8px] border border-[#ff7777]/20 bg-[#ff7777]/10 p-5 text-white/90">
-                  <span className="font-bold text-white">Match détecté :</span>
+                  <span className="font-bold text-white">Match detected:</span>
                   <p className="mt-1 text-sm leading-6">
                     {activeReport?.similar_tracks?.[0]?.title
                       ?? livePipelineSteps.find((step) => step.status === "blocked")?.reason
-                      ?? "Similarité élevée détectée."}
+                      ?? "High similarity detected."}
                   </p>
                   {activeReport?.similar_tracks?.[0]?.score ? (
-                    <p className="mt-2 font-mono text-sm text-white/75">
-                      Score {activeReport.similar_tracks[0].score}%
-                      {activeReport.similar_tracks[0].key.startsWith("ISRC")
-                        ? ` · ${activeReport.similar_tracks[0].key}`
-                        : null}
-                    </p>
+                    <div className="mt-2 font-mono text-sm text-white/75 space-y-1">
+                      <p>
+                        Score <span className="font-black text-white">{fmtScore(activeReport.similar_tracks[0].score)}%</span>
+                        {activeReport.similar_tracks[0].key.startsWith("ISRC")
+                          ? ` · ${activeReport.similar_tracks[0].key}`
+                          : null}
+                      </p>
+                      {activeReport.similar_tracks[0].global_overlap !== undefined && (
+                        <p className="text-xs text-white/55">
+                          Global melody: {fmtScore(activeReport.similar_tracks[0].global_overlap)}%
+                          {activeReport.similar_tracks[0].hook !== undefined && (
+                            <> · Distinctive phrase: {fmtScore(activeReport.similar_tracks[0].hook)}%</>
+                          )}
+                          {activeReport.similar_tracks[0].hook_intervals ? (
+                            <> · {activeReport.similar_tracks[0].hook_intervals} intervals</>
+                          ) : null}
+                        </p>
+                      )}
+                    </div>
                   ) : null}
                   {activeReport?.ai_summary ? (
                     <p className="mt-3 font-mono text-xs text-white/60">{activeReport.ai_summary}</p>
+                  ) : null}
+                  {publicReferences.length > 0 ? (
+                    <div className="mt-4 rounded-[8px] border border-[#8fd5ff]/20 bg-[#8fd5ff]/10 p-4 text-white/85">
+                      <p className="text-sm font-bold text-[#8fd5ff]">Public references also detected</p>
+                      <ul className="mt-2 space-y-1 text-sm text-white/75">
+                        {publicReferences.slice(0, 3).map((reference) => (
+                          <li key={`${reference.ISRC ?? reference.title}-${reference.rank}`}>
+                            {reference.title} · {fmtScore(reference.score)}%
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   ) : null}
                 </div>
               </div>
@@ -1866,10 +2489,12 @@ export default function Home() {
             </div>
           ) : hasRegistrySeal ? (
             <div className="relative overflow-hidden rounded-[8px] border border-white/15 bg-[#f8f6ee] p-6 text-[#050505] sm:p-8">
-              <div className="absolute right-8 top-8 rounded-full bg-[#050505] px-4 py-2 text-sm font-black text-[#f8f6ee]">
+              <div className="echo-seal-pulse absolute right-8 top-8 rounded-full bg-[#050505] px-4 py-2 text-sm font-black text-[#f8f6ee]">
                 SEALED
               </div>
-              <p className="font-hand text-3xl text-[#f59abd]">sealed certificate</p>
+              <p className="echo-hand-float font-hand text-3xl text-[#f59abd]" style={{ animationDelay: "0.8s" }}>
+                sealed certificate
+              </p>
               <h2 className="mt-4 max-w-3xl font-display text-[clamp(3rem,7vw,7rem)] font-black leading-[0.86]">
                 Proof that keeps the music yours.
               </h2>
@@ -1921,10 +2546,12 @@ export default function Home() {
             </div>
           ) : (
             <div className="relative overflow-hidden rounded-[8px] border border-white/15 bg-[#080808] p-6 text-white sm:p-8">
-              <div className="rounded-full border border-white/15 bg-white/[0.03] px-4 py-2 text-sm font-black text-white/55 w-fit">
+              <div className="echo-pending-pulse rounded-full border border-white/15 bg-white/[0.03] px-4 py-2 text-sm font-black text-white/55 w-fit">
                 CERTIFICATE PENDING
               </div>
-              <p className="mt-8 font-hand text-3xl text-[#f59abd]">no seal yet</p>
+              <p className="echo-hand-float mt-8 font-hand text-3xl text-[#f59abd]" style={{ animationDelay: "0.5s" }}>
+                no seal yet
+              </p>
               <h2 className="mt-4 max-w-3xl font-display text-[clamp(3rem,7vw,7rem)] font-black leading-[0.86]">
                 Certificate appears only after a clean Registry transaction.
               </h2>
@@ -1949,7 +2576,7 @@ export default function Home() {
                 <p className="text-sm uppercase text-white/45">Reveal queue</p>
                 <h3 className="mt-1 font-display text-3xl font-black">Artist controls</h3>
               </div>
-              <Disc3 className="size-10 text-[#8fd5ff]" aria-hidden="true" />
+              <Disc3 className="echo-disc-idle size-10 text-[#8fd5ff]" aria-hidden="true" />
             </div>
             <div className="space-y-3">
               {[
@@ -1969,13 +2596,86 @@ export default function Home() {
               className="mt-8 inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#8fd5ff] px-5 font-black text-[#050505] transition hover:bg-[#b8e5ff] disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={!hasRegistrySeal || !certificateTrackId || isWritingRegistry}
               onClick={handleRevealTrack}
+              type="button"
             >
               {isWritingRegistry ? "Revealing..." : "Reveal track"}
               <ArrowUpRight className="size-5" aria-hidden="true" />
             </button>
+
+            <div className="mt-6 border-t border-white/10 pt-6">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm uppercase text-white/45">Release</p>
+                  <h4 className="mt-1 font-display text-2xl font-black">SoundCloud</h4>
+                </div>
+                <Upload className="size-8 text-[#f59abd]" aria-hidden="true" />
+              </div>
+
+              {isCleanAndSealed ? (
+                <button
+                  className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#f59abd] px-5 font-black text-[#050505] transition hover:bg-[#ffb1ce] disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!canPublishToSoundCloud}
+                  onClick={handlePublishToSoundCloud}
+                  type="button"
+                >
+                  {soundCloudPublish.status === "publishing" ? "Publishing..." : "Publish to SoundCloud"}
+                  <ArrowUpRight className="size-5" aria-hidden="true" />
+                </button>
+              ) : (
+                <p className="rounded-[8px] border border-white/10 px-4 py-3 text-sm font-bold text-white/55">
+                  SoundCloud publish unlocks after a CLEAN seal.
+                </p>
+              )}
+
+              <div className="mt-4 min-h-6" aria-live="polite">
+                {soundCloudPublish.status === "published" ? (
+                  <a
+                    className="inline-flex items-center gap-2 text-sm font-black text-[#9ef7c9] transition hover:text-white"
+                    href={soundCloudPublish.response.soundcloud_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Published on SoundCloud
+                    <ExternalLink className="size-4" aria-hidden="true" />
+                  </a>
+                ) : soundCloudPublish.status === "error" ? (
+                  <p className="text-sm font-bold text-[#ff7777]">{soundCloudPublish.error}</p>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-6 border-t border-white/10 pt-6">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm uppercase text-white/45">Licensing</p>
+                  <h4 className="mt-1 font-display text-2xl font-black">Sell my rights</h4>
+                </div>
+                <Tag className="size-8 text-[#fff7cf]" aria-hidden="true" />
+              </div>
+
+              {isCleanAndSealed && certificateTrackId ? (
+                <button
+                  className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#fff7cf] px-5 font-black text-[#050505] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!echoConfig.escrowAddress}
+                  onClick={() => setSellModalOpen(true)}
+                  type="button"
+                >
+                  <Tag className="size-5" aria-hidden="true" />
+                  {echoConfig.escrowAddress ? "Mettre en vente" : "Escrow non déployé"}
+                </button>
+              ) : (
+                <p className="rounded-[8px] border border-white/10 px-4 py-3 text-sm font-bold text-white/55">
+                  La vente de droits est disponible après un seal CLEAN.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </section>
+
+      {sellModalOpen && certificateTrackId && (
+        <SellRightsModal trackId={certificateTrackId} onClose={() => setSellModalOpen(false)} />
+      )}
 
       {worldQr ? <WorldIdQrModal connectorURI={worldQr.connectorURI} imageDataUrl={worldQr.imageDataUrl} onClose={() => setWorldQr(null)} /> : null}
 
@@ -2197,18 +2897,25 @@ function CertificateMetric({ label, value, copyValue }: { label: string; value: 
 function VinylVisual({ isPlaying }: { isPlaying: boolean }) {
   return (
     <div className="absolute inset-0 grid place-items-center">
-      <div className={`vinyl relative size-full rounded-full border border-white/20 bg-[#111] ${isPlaying ? "animate-spin-slow" : ""}`}>
-        <div className="absolute inset-[8%] rounded-full border border-white/10" />
-        <div className="absolute inset-[18%] rounded-full border border-white/10" />
-        <div className="absolute inset-[30%] rounded-full border border-white/10" />
-        <div className="absolute left-1/2 top-1/2 grid size-24 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[#f59abd] text-[#050505]">
+      <div
+        className={`vinyl relative size-full rounded-full border border-white/20 bg-[#111] ${isPlaying ? "vinyl-spin-fast" : "vinyl-spin-idle"}`}
+      >
+        <div className="vinyl-shimmer vinyl-shimmer-spin absolute inset-0 rounded-full" aria-hidden="true" />
+        <div className="echo-groove-pulse absolute inset-[8%] rounded-full border border-white/10" style={{ animationDelay: "0s" }} />
+        <div className="echo-groove-pulse absolute inset-[18%] rounded-full border border-white/10" style={{ animationDelay: "0.8s" }} />
+        <div className="echo-groove-pulse absolute inset-[30%] rounded-full border border-white/10" style={{ animationDelay: "1.6s" }} />
+        <div className="vinyl-label-pulse absolute left-1/2 top-1/2 grid size-24 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[#f59abd] text-[#050505]">
           <FileAudio className="size-9" aria-hidden="true" />
         </div>
       </div>
       <svg className="pointer-events-none absolute -right-6 top-8 h-44 w-40 text-[#fff7cf]" viewBox="0 0 180 190" fill="none" aria-hidden="true">
-        <path d="M144 18C127 53 120 75 124 102C128 130 118 151 88 168" stroke="currentColor" strokeWidth="12" strokeLinecap="round" />
-        <path d="M87 168C59 184 28 171 23 146C19 126 33 111 55 111C79 111 94 132 88 168Z" fill="currentColor" />
-        <path d="M27 46L51 58L27 70L15 94L3 70L-21 58L3 46L15 22L27 46Z" fill="currentColor" transform="translate(38 10)" />
+        <g className="vinyl-note">
+          <path d="M144 18C127 53 120 75 124 102C128 130 118 151 88 168" stroke="currentColor" strokeWidth="12" strokeLinecap="round" />
+          <path d="M87 168C59 184 28 171 23 146C19 126 33 111 55 111C79 111 94 132 88 168Z" fill="currentColor" />
+        </g>
+        <g className="vinyl-sparkle">
+          <path d="M27 46L51 58L27 70L15 94L3 70L-21 58L3 46L15 22L27 46Z" fill="currentColor" transform="translate(38 10)" />
+        </g>
       </svg>
     </div>
   );

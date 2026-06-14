@@ -191,6 +191,20 @@ export async function createOrReuseFlow(input: CreateFlowInput) {
 
   if (process.env.DATABASE_URL) {
     await ensurePostgresSchema();
+
+    // Block a different identity from submitting a track whose analysis already completed.
+    const completed = await getPool().query(
+      `SELECT nullifier_hash FROM echo_flows
+       WHERE track_fingerprint = $1
+         AND status = 'pipeline_completed'
+         AND nullifier_hash != $2
+       LIMIT 1`,
+      [input.trackFingerprint, input.nullifierHash],
+    );
+    if (completed.rows.length > 0) {
+      throw new FlowStoreError("This track is already registered by another artist", 409);
+    }
+
     const result = await getPool().query(
       `
       INSERT INTO echo_flows (
@@ -214,6 +228,18 @@ export async function createOrReuseFlow(input: CreateFlowInput) {
 
   assertLocalFileStoreAvailable();
   const file = await readFlowFile();
+
+  // Block a different identity from submitting a track whose analysis already completed.
+  const alreadyCompleted = file.flows.find(
+    (flow) =>
+      flow.trackFingerprint === input.trackFingerprint &&
+      flow.status === "pipeline_completed" &&
+      flow.nullifierHash !== input.nullifierHash,
+  );
+  if (alreadyCompleted) {
+    throw new FlowStoreError("This track is already registered by another artist", 409);
+  }
+
   const existing = file.flows.find((flow) => flow.nullifierHash === input.nullifierHash && flow.trackFingerprint === input.trackFingerprint);
 
   if (existing) {
@@ -607,6 +633,11 @@ export async function resetFlowForPipelineRetry(flowId: string, trackId: string)
     return getPipelineSteps(flowId);
   }
 
+  // A completed flow cannot be re-analyzed (CLEAN verdict is final).
+  if (flow.status === "pipeline_completed") {
+    throw new FlowStoreError("This track has already been analyzed and cannot be re-submitted", 409);
+  }
+
   const now = new Date().toISOString();
   const pipelineSteps = buildInitialPipelineSteps(flowId, trackId, now);
 
@@ -905,22 +936,22 @@ export async function updatePipelineOutcome(
         error = $3,
         registry_track_id = CASE
           WHEN $9::boolean THEN NULL
-          WHEN $6 IS NOT NULL THEN $6
+          WHEN $6::text IS NOT NULL THEN $6::text
           ELSE registry_track_id
         END,
         registry_tx_hash = CASE
           WHEN $9::boolean OR $10::boolean THEN NULL
-          WHEN $7 IS NOT NULL THEN $7
+          WHEN $7::text IS NOT NULL THEN $7::text
           ELSE registry_tx_hash
         END,
         commitment_hash = CASE
           WHEN $9::boolean THEN NULL
-          WHEN $4 IS NOT NULL THEN $4
+          WHEN $4::text IS NOT NULL THEN $4::text
           ELSE commitment_hash
         END,
         registry_ref = CASE
           WHEN $9::boolean THEN NULL
-          WHEN $5 IS NOT NULL THEN $5
+          WHEN $5::text IS NOT NULL THEN $5::text
           ELSE registry_ref
         END,
         report = COALESCE($8::jsonb, report),
@@ -1278,6 +1309,7 @@ function normalizeReport(value: unknown): EchoReport | undefined {
       verdict: report.verdict,
       submitted_track: report.submitted_track,
       similar_tracks: report.similar_tracks,
+      public_references: Array.isArray(report.public_references) ? report.public_references : undefined,
       ai_summary: typeof report.ai_summary === "string" ? report.ai_summary : undefined,
     };
   }
