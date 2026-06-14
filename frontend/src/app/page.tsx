@@ -239,15 +239,26 @@ async function createAudioFingerprint(file: File) {
   return `sha256:${hash}`;
 }
 
+function fmtScore(score: number): string {
+  return score % 1 === 0 ? `${score}` : score.toFixed(1);
+}
+
 function normalizeReportMatches(report?: EchoReport): ReportTableMatch[] {
   if (!report?.similar_tracks?.length) {
     return [];
   }
 
-  return report.similar_tracks.map((match) => ({
-    ...match,
-    keyLabel: typeof match.BPM === "number" ? `${match.key} / ${match.BPM}` : match.key,
-  }));
+  return report.similar_tracks.map((match) => {
+    let keyLabel: string;
+    if (typeof match.BPM === "number" && match.BPM > 0) {
+      keyLabel = `${match.key} / ${match.BPM}`;
+    } else if (match.hook_intervals && match.hook_intervals > 0) {
+      keyLabel = `${match.hook_intervals} intv.`;
+    } else {
+      keyLabel = match.key;
+    }
+    return { ...match, keyLabel };
+  });
 }
 
 function getBestMatch(report?: EchoReport) {
@@ -331,14 +342,11 @@ function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineSt
         title: matchLabel,
         source: isPlagiarism ? "ACRCloud" : "Registre privé",
         score,
-        melody: score,
-        rhythm: score,
-        structure: score,
-        key: isPlagiarism ? isrcKey : blockedStep.reason?.slice(0, 12) ?? "—",
+        key: isPlagiarism ? isrcKey : "MIDI",
       },
     ],
     ai_summary: isPlagiarism
-      ? `Plagiat détecté (${score}%) — correspondance avec « ${matchLabel} ».`
+      ? `Plagiat détecté (${fmtScore(score)}%) — correspondance avec « ${matchLabel} ».`
       : blockedStep.reason ?? flow.error ?? "Analyse interrompue — aucun seal on-chain.",
   };
 }
@@ -2116,7 +2124,7 @@ export default function Home() {
               <p className="mt-2 text-white/60 text-lg">{verdictInfo.subtitle}</p>
             </div>
             <div className={`rounded-full border px-5 py-3 font-black ${verdictInfo.badgeClass}`}>
-              {verdictInfo.badgeText} {verdictInfo.bestMatch > 0 ? `· Best match ${verdictInfo.bestMatch}%` : ""}
+              {verdictInfo.badgeText} {verdictInfo.bestMatch > 0 ? `· Best match ${fmtScore(verdictInfo.bestMatch)}%` : ""}
             </div>
           </div>
 
@@ -2127,20 +2135,32 @@ export default function Home() {
                   <div className="min-w-14 border-b border-white/10 p-4">#</div>
                   <div className="min-w-64 border-b border-white/10 p-4">Track</div>
                   <div className="min-w-24 border-b border-white/10 p-4">Global</div>
-                  <div className="min-w-24 border-b border-white/10 p-4">Melody</div>
+                  <div className="min-w-24 border-b border-white/10 p-4 flex items-center gap-1">
+                    Melody
+                    {reportMatches[0]?.global_overlap !== undefined && (
+                      <span className="text-[10px] text-white/30 font-normal">(n-gram)</span>
+                    )}
+                  </div>
                   <div className="min-w-24 border-b border-white/10 p-4">Rhythm</div>
-                  <div className="min-w-24 border-b border-white/10 p-4">Structure</div>
-                  <div className="min-w-28 border-b border-white/10 p-4">Key / BPM</div>
+                  <div className="min-w-24 border-b border-white/10 p-4 flex items-center gap-1">
+                    Hook
+                    {reportMatches[0]?.hook !== undefined && (
+                      <span className="text-[10px] text-white/30 font-normal">(S-W)</span>
+                    )}
+                  </div>
+                  <div className="min-w-28 border-b border-white/10 p-4">
+                    {reportMatches[0]?.hook_intervals !== undefined ? "Phrase len." : "Key / BPM"}
+                  </div>
                   <div className="min-w-32 border-b border-white/10 p-4">Source</div>
                 </div>
                 {reportMatches.map((match) => (
                   <div className="contents" key={match.rank}>
                     <div className="min-w-14 border-b border-white/10 p-4 text-white/55">{match.rank}</div>
                     <div className="min-w-64 border-b border-white/10 p-4 font-bold">{match.title}</div>
-                    <div className={`min-w-24 border-b border-white/10 p-4 font-black ${scoreTone(match.score)}`}>{match.score}%</div>
-                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.melody}%</div>
-                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.rhythm}%</div>
-                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.structure}%</div>
+                    <div className={`min-w-24 border-b border-white/10 p-4 font-black ${scoreTone(match.score)}`}>{fmtScore(match.score)}%</div>
+                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.melody !== undefined ? `${fmtScore(match.melody)}%` : <span className="text-white/25">—</span>}</div>
+                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.rhythm !== undefined ? `${fmtScore(match.rhythm)}%` : <span className="text-white/25">—</span>}</div>
+                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.structure !== undefined ? `${fmtScore(match.structure)}%` : <span className="text-white/25">—</span>}</div>
                     <div className="min-w-28 border-b border-white/10 p-4 text-white/65">{match.keyLabel}</div>
                     <div className="min-w-32 border-b border-white/10 p-4 text-white/65">{match.source}</div>
                   </div>
@@ -2228,12 +2248,25 @@ export default function Home() {
                       ?? "Similarité élevée détectée."}
                   </p>
                   {activeReport?.similar_tracks?.[0]?.score ? (
-                    <p className="mt-2 font-mono text-sm text-white/75">
-                      Score {activeReport.similar_tracks[0].score}%
-                      {activeReport.similar_tracks[0].key.startsWith("ISRC")
-                        ? ` · ${activeReport.similar_tracks[0].key}`
-                        : null}
-                    </p>
+                    <div className="mt-2 font-mono text-sm text-white/75 space-y-1">
+                      <p>
+                        Score <span className="font-black text-white">{fmtScore(activeReport.similar_tracks[0].score)}%</span>
+                        {activeReport.similar_tracks[0].key.startsWith("ISRC")
+                          ? ` · ${activeReport.similar_tracks[0].key}`
+                          : null}
+                      </p>
+                      {activeReport.similar_tracks[0].global_overlap !== undefined && (
+                        <p className="text-xs text-white/55">
+                          Mélodie globale: {fmtScore(activeReport.similar_tracks[0].global_overlap)}%
+                          {activeReport.similar_tracks[0].hook !== undefined && (
+                            <> · Phrase distinctive: {fmtScore(activeReport.similar_tracks[0].hook)}%</>
+                          )}
+                          {activeReport.similar_tracks[0].hook_intervals ? (
+                            <> · {activeReport.similar_tracks[0].hook_intervals} intervalles</>
+                          ) : null}
+                        </p>
+                      )}
+                    </div>
                   ) : null}
                   {activeReport?.ai_summary ? (
                     <p className="mt-3 font-mono text-xs text-white/60">{activeReport.ai_summary}</p>

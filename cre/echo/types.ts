@@ -103,11 +103,16 @@ export type SimilarTrack = {
   title: string;
   source: "ACRCloud" | "Registre privé"; // exact API value — do not translate
   score: number;
-  melody: number;
-  rhythm: number;
-  structure: number;
+  /** undefined = data not available for this analysis step */
+  melody?: number;
+  rhythm?: number;
+  structure?: number;
   key: string;
-  BPM: number;
+  BPM?: number;
+  /** MIDI sub-scores — set for Step 2B registry matches only */
+  global_overlap?: number;
+  hook?: number;
+  hook_intervals?: number;
 };
 
 export type ReportResponse = {

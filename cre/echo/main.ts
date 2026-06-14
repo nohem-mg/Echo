@@ -117,34 +117,42 @@ const buildPlagiarismReport = (match: AcrMatch, reason: string): ReportResponse 
         title: label,
         source: "ACRCloud",
         score: match.confidence_score,
-        melody: match.confidence_score,
-        rhythm: match.confidence_score,
-        structure: match.confidence_score,
+        // ACRCloud returns a single confidence score — no breakdown by dimension
         key: match.ISRC ? `ISRC ${match.ISRC}` : "—",
-        BPM: 0,
       },
     ],
     ai_summary: `${reason}. Correspondance acoustique avec « ${label} ».`,
   };
 };
 
-const buildSimilarRegistryReport = (match: RegistryMatch, reason: string): ReportResponse => ({
-  verdict: "SIMILAR",
-  similar_tracks: [
-    {
-      rank: 1,
-      title: `Track privée ${match.track_id.slice(0, 12)}…`,
-      source: "Registre privé",
-      score: match.similarity_score,
-      melody: match.similarity_score,
-      rhythm: match.similarity_score,
-      structure: match.similarity_score,
-      key: match.track_id.slice(0, 10),
-      BPM: 0,
-    },
-  ],
-  ai_summary: `${reason}. Similarité compositionnelle vs registre privé.`,
-});
+const buildSimilarRegistryReport = (match: RegistryMatch, reason: string): ReportResponse => {
+  const globalOverlap = match.global_overlap ?? match.similarity_score;
+  const hookStrength = match.hook ?? match.similarity_score;
+  const hookLen = match.hook_intervals ?? 0;
+  const scoreStr = (n: number) => (n % 1 === 0 ? `${n}` : n.toFixed(1));
+  const keyLabel = hookLen > 0 ? `${hookLen} intv.` : "MIDI";
+  const summaryParts = [`mélodie globale: ${scoreStr(globalOverlap)}%`, `phrase distinctive: ${scoreStr(hookStrength)}%`];
+  if (hookLen > 0) summaryParts.push(`longueur: ${hookLen} intervalles`);
+  return {
+    verdict: "SIMILAR",
+    similar_tracks: [
+      {
+        rank: 1,
+        title: `Track privée ${match.track_id.slice(0, 12)}…`,
+        source: "Registre privé",
+        score: match.similarity_score,
+        melody: globalOverlap,
+        // rhythm: not measured — MIDI algo compares pitch intervals only, not timing
+        structure: hookStrength,
+        key: keyLabel,
+        global_overlap: globalOverlap,
+        hook: hookStrength,
+        hook_intervals: hookLen,
+      },
+    ],
+    ai_summary: `Similarité ${scoreStr(match.similarity_score)}% vs registre privé — ${summaryParts.join(", ")}.`,
+  };
+};
 
 // Fail-fast halt: returns a terminal verdict with no partial state.
 const halt = (
