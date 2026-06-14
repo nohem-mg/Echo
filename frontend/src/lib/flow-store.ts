@@ -905,22 +905,22 @@ export async function updatePipelineOutcome(
         error = $3,
         registry_track_id = CASE
           WHEN $9::boolean THEN NULL
-          WHEN $6 IS NOT NULL THEN $6
+          WHEN $6::text IS NOT NULL THEN $6::text
           ELSE registry_track_id
         END,
         registry_tx_hash = CASE
           WHEN $9::boolean OR $10::boolean THEN NULL
-          WHEN $7 IS NOT NULL THEN $7
+          WHEN $7::text IS NOT NULL THEN $7::text
           ELSE registry_tx_hash
         END,
         commitment_hash = CASE
           WHEN $9::boolean THEN NULL
-          WHEN $4 IS NOT NULL THEN $4
+          WHEN $4::text IS NOT NULL THEN $4::text
           ELSE commitment_hash
         END,
         registry_ref = CASE
           WHEN $9::boolean THEN NULL
-          WHEN $5 IS NOT NULL THEN $5
+          WHEN $5::text IS NOT NULL THEN $5::text
           ELSE registry_ref
         END,
         report = COALESCE($8::jsonb, report),

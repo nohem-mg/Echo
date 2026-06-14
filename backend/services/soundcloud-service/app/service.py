@@ -30,23 +30,58 @@ class SoundCloudService:
         self._s = settings
 
     async def refresh_token(self, refresh_token: str) -> dict:
-        async with httpx.AsyncClient() as client:
-            r = await client.post(
-                "https://secure.soundcloud.com/oauth/token",
-                data={
-                    "grant_type": "refresh_token",
-                    "client_id": self._s.client_id,
-                    "client_secret": self._s.client_secret,
-                    "refresh_token": refresh_token,
-                }
+        async with httpx.AsyncClient(timeout=self._s.timeout_s) as client:
+            try:
+                response = await client.post(
+                    "https://secure.soundcloud.com/oauth/token",
+                    headers={
+                        "accept": "application/json; charset=utf-8",
+                        "content-type": "application/x-www-form-urlencoded",
+                    },
+                    data={
+                        "grant_type": "refresh_token",
+                        "client_id": self._s.client_id,
+                        "client_secret": self._s.client_secret,
+                        "refresh_token": refresh_token,
+                    },
+                )
+            except httpx.TimeoutException as exc:
+                logger.exception("SoundCloud refresh request timed out")
+                raise UpstreamError("SoundCloud refresh request timed out.") from exc
+            except httpx.HTTPError as exc:
+                logger.exception("SoundCloud refresh request failed")
+                raise UpstreamError("SoundCloud refresh request failed.") from exc
+
+        if not response.is_success:
+            logger.error(
+                "SoundCloud refresh token rejected",
+                extra={"context": {"status": response.status_code, "body": response.text[:256]}},
             )
-            r.raise_for_status()
-            return r.json()
+            raise UpstreamError(
+                "SoundCloud refresh_token was rejected. Re-authorize the SoundCloud account and update ECHO_SC_REFRESH_TOKEN.",
+                code="unauthorized",
+            )
+
+        return _json_or_upstream_error(response, "SoundCloud refresh endpoint returned invalid JSON.")
 
     async def upload(
         self, audio_path: Path, metadata: UploadMetadata
     ) -> UploadResponse:
         """Upload an audio file to SoundCloud and return the track permalink."""
+        metadata.access_token = metadata.access_token or self._s.access_token
+        metadata.refresh_token = metadata.refresh_token or self._s.refresh_token
+
+        if not metadata.access_token and metadata.refresh_token:
+            logger.info("SoundCloud access_token absent — refreshing from refresh_token...")
+            new_tokens = await self.refresh_token(metadata.refresh_token)
+            metadata.access_token = new_tokens["access_token"]
+
+        if not metadata.access_token:
+            raise UpstreamError(
+                "SoundCloud access token is not configured. Set ECHO_SC_ACCESS_TOKEN in soundcloud-service or pass access_token in metadata.",
+                code="configuration_error",
+            )
+
         try:
             payload = await self._upload_to_api(audio_path, metadata)
         except UpstreamError as e:
@@ -126,3 +161,15 @@ class SoundCloudService:
             return resp.json()
         except ValueError as exc:
             raise UpstreamError("SoundCloud returned an unparseable response.") from exc
+
+
+def _json_or_upstream_error(response: httpx.Response, message: str) -> dict:
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise UpstreamError(message) from exc
+
+    if not isinstance(payload, dict):
+        raise UpstreamError(message)
+
+    return payload
