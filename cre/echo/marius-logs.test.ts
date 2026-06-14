@@ -89,8 +89,8 @@ describe("marius-logs", () => {
           similar_tracks: [
             {
               rank: 1,
-              title: "Track privée priv-99…",
-              source: "Registre privé",
+              title: "Private track priv-99…",
+              source: "Private registry",
               score: 82,
               melody: 82,
               rhythm: 82,

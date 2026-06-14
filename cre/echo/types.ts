@@ -101,7 +101,7 @@ export type SubmittedTrack = {
 export type SimilarTrack = {
   rank: number;
   title: string;
-  source: "ACRCloud" | "Registre privé"; // exact API value — do not translate
+  source: "ACRCloud" | "Private registry"; // exact API value for report rows
   score: number;
   /** undefined = data not available for this analysis step */
   melody?: number;
@@ -115,11 +115,22 @@ export type SimilarTrack = {
   hook_intervals?: number;
 };
 
+/** Informational ACRCloud humming/cover hits (below or above blocking threshold). */
+export type PublicReference = {
+  rank: number;
+  title: string;
+  artists?: string[];
+  ISRC?: string;
+  score: number;
+  source: "ACRCloud Cover";
+};
+
 export type ReportResponse = {
   // Backend decides CLEAN | SIMILAR; CRE adds REJECTED on fail-fast 2A halt.
   verdict: "CLEAN" | "SIMILAR" | "REJECTED";
   submitted_track?: SubmittedTrack;
   similar_tracks: SimilarTrack[];
+  public_references?: PublicReference[];
   ai_summary: string;
 };
 

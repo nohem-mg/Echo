@@ -492,7 +492,7 @@ function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineSt
   const isPlagiarism = blockedStep.stepKey === "02A";
   const matchLabel =
     formatBlockedMatchLabel(parsedDetail, blockedStep.meta) ??
-    (isPlagiarism ? "Correspondance ACRCloud" : "Similarité registre privé");
+    (isPlagiarism ? "ACRCloud match" : "Private registry similarity");
   const isrcKey = parsedDetail?.ISRC ? `ISRC ${parsedDetail.ISRC}` : "—";
 
   return {
@@ -501,14 +501,14 @@ function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineSt
       {
         rank: 1,
         title: matchLabel,
-        source: isPlagiarism ? "ACRCloud" : "Registre privé",
+        source: isPlagiarism ? "ACRCloud" : "Private registry",
         score,
         key: isPlagiarism ? isrcKey : "MIDI",
       },
     ],
     ai_summary: isPlagiarism
-      ? `Plagiat détecté (${fmtScore(score)}%) — correspondance avec « ${matchLabel} ».`
-      : blockedStep.reason ?? flow.error ?? "Analyse interrompue — aucun seal on-chain.",
+      ? `Plagiarism detected (${fmtScore(score)}%) — match with « ${matchLabel} ».`
+      : blockedStep.reason ?? flow.error ?? "Analysis halted — no on-chain seal.",
   };
 }
 
@@ -661,6 +661,7 @@ export default function Home() {
     shouldUseMockReport && flow?.status === "pipeline_completed" ? mockReports.CLEAN : undefined,
   );
   const reportMatches = useMemo(() => normalizeReportMatches(activeReport), [activeReport]);
+  const publicReferences = useMemo(() => activeReport?.public_references ?? [], [activeReport]);
   const bestReportMatch = getBestMatch(activeReport);
   const hasRegistrySeal = Boolean(flow?.status === "pipeline_completed" && flow.registryTxHash);
   const isCleanAndSealed = Boolean(hasRegistrySeal && activeReport?.verdict === "CLEAN");
@@ -2330,6 +2331,32 @@ export default function Home() {
               {activeReport?.ai_summary ? (
                 <p className="border-t border-white/10 p-4 text-sm leading-6 text-white/65">{activeReport.ai_summary}</p>
               ) : null}
+              {publicReferences.length > 0 ? (
+                <div className="border-t border-[#8fd5ff]/20 bg-[#8fd5ff]/5">
+                  <div className="border-b border-[#8fd5ff]/15 px-5 py-4">
+                    <p className="font-hand text-xl text-[#8fd5ff]">public references detected</p>
+                    <p className="mt-1 text-sm text-white/55">
+                      ACRCloud humming — informational signal (cover block threshold: 85%).
+                    </p>
+                  </div>
+                  <div className="divide-y divide-white/10">
+                    {publicReferences.map((reference) => (
+                      <div className="grid gap-3 px-5 py-4 sm:grid-cols-[1fr_auto]" key={`${reference.ISRC ?? reference.title}-${reference.rank}`}>
+                        <div>
+                          <p className="font-bold text-white/90">{reference.title}</p>
+                          {reference.ISRC ? (
+                            <p className="mt-1 font-mono text-xs text-white/45">{reference.ISRC}</p>
+                          ) : null}
+                        </div>
+                        <div className="text-right">
+                          <p className="font-display text-2xl font-black text-[#8fd5ff]">{fmtScore(reference.score)}%</p>
+                          <p className="text-xs text-white/45">{reference.source}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : verdictInfo.showMatches && activeReport ? (
             <div className="rounded-[8px] border border-white/15 bg-[#080808] p-6 sm:p-8">
@@ -2370,13 +2397,13 @@ export default function Home() {
           ) : flow?.status === "pipeline_blocked" || flow?.status === "error" ? (
             <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/55">
               <p className="font-bold text-white/80">
-                {flow.status === "pipeline_blocked" ? "Analyse terminée — aucun seal on-chain" : "Erreur pipeline"}
+                {flow.status === "pipeline_blocked" ? "Analysis complete — no on-chain seal" : "Pipeline error"}
               </p>
               <p className="mt-3 text-sm leading-6">
                 {activeReport?.ai_summary
                   ?? livePipelineSteps.find((step) => step.status === "blocked")?.reason
                   ?? flow.error
-                  ?? "Aucune transaction Registry n'a été créée."}
+                  ?? "No Registry transaction was created."}
               </p>
             </div>
           ) : (
@@ -2384,6 +2411,7 @@ export default function Home() {
               {pipelineStarted ? "Verification in progress..." : "No track has been verified yet."}
             </div>
           )}
+
         </div>
       </section>
 
@@ -2402,11 +2430,11 @@ export default function Home() {
                   This track did not pass the prior-art criteria. Echo has halted the execution to prevent duplicate or plagiarized works from being sealed on-chain.
                 </p>
                 <div className="mt-8 rounded-[8px] border border-[#ff7777]/20 bg-[#ff7777]/10 p-5 text-white/90">
-                  <span className="font-bold text-white">Match détecté :</span>
+                  <span className="font-bold text-white">Match detected:</span>
                   <p className="mt-1 text-sm leading-6">
                     {activeReport?.similar_tracks?.[0]?.title
                       ?? livePipelineSteps.find((step) => step.status === "blocked")?.reason
-                      ?? "Similarité élevée détectée."}
+                      ?? "High similarity detected."}
                   </p>
                   {activeReport?.similar_tracks?.[0]?.score ? (
                     <div className="mt-2 font-mono text-sm text-white/75 space-y-1">
@@ -2418,12 +2446,12 @@ export default function Home() {
                       </p>
                       {activeReport.similar_tracks[0].global_overlap !== undefined && (
                         <p className="text-xs text-white/55">
-                          Mélodie globale: {fmtScore(activeReport.similar_tracks[0].global_overlap)}%
+                          Global melody: {fmtScore(activeReport.similar_tracks[0].global_overlap)}%
                           {activeReport.similar_tracks[0].hook !== undefined && (
-                            <> · Phrase distinctive: {fmtScore(activeReport.similar_tracks[0].hook)}%</>
+                            <> · Distinctive phrase: {fmtScore(activeReport.similar_tracks[0].hook)}%</>
                           )}
                           {activeReport.similar_tracks[0].hook_intervals ? (
-                            <> · {activeReport.similar_tracks[0].hook_intervals} intervalles</>
+                            <> · {activeReport.similar_tracks[0].hook_intervals} intervals</>
                           ) : null}
                         </p>
                       )}
@@ -2431,6 +2459,18 @@ export default function Home() {
                   ) : null}
                   {activeReport?.ai_summary ? (
                     <p className="mt-3 font-mono text-xs text-white/60">{activeReport.ai_summary}</p>
+                  ) : null}
+                  {publicReferences.length > 0 ? (
+                    <div className="mt-4 rounded-[8px] border border-[#8fd5ff]/20 bg-[#8fd5ff]/10 p-4 text-white/85">
+                      <p className="text-sm font-bold text-[#8fd5ff]">Public references also detected</p>
+                      <ul className="mt-2 space-y-1 text-sm text-white/75">
+                        {publicReferences.slice(0, 3).map((reference) => (
+                          <li key={`${reference.ISRC ?? reference.title}-${reference.rank}`}>
+                            {reference.title} · {fmtScore(reference.score)}%
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   ) : null}
                 </div>
               </div>
