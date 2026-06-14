@@ -7,7 +7,6 @@ import {
   ArrowUpRight,
   Check,
   CircleDot,
-  ExternalLink,
   LockKeyhole,
   Music,
   Radio,
@@ -16,17 +15,16 @@ import {
   Tag,
   X,
 } from "lucide-react";
-import { formatEther, type Abi } from "viem";
+import { formatUnits, type Abi } from "viem";
 import {
   useAccount,
   useReadContract,
   useReadContracts,
-  useWriteContract,
-  useWaitForTransactionReceipt,
 } from "wagmi";
-import { sepolia } from "wagmi/chains";
 import { echoConfig } from "@/lib/config";
 import escrowAbiJson from "@/lib/abi/LicenseEscrow.json";
+import { useUnlinkEscrow } from "@/lib/use-unlink-escrow";
+import { UnlinkDepositPanel } from "@/components/unlink-deposit-panel";
 
 const escrowAbi = escrowAbiJson.abi as Abi;
 
@@ -86,41 +84,18 @@ function ListingPanel({
   const isBuyer = purchase?.buyer?.toLowerCase() === connectedAddress?.toLowerCase();
   const isSeller = listing.seller.toLowerCase() === connectedAddress?.toLowerCase();
 
-  const {
-    writeContract,
-    data: txHash,
-    isPending,
-    error: writeError,
-    reset,
-  } = useWriteContract();
-
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash: txHash,
-    chainId: sepolia.id,
-  });
+  const { purchase: unlinkPurchase, confirmAndRelease, isPending, isSuccess, error, reset, deposit, resetDeposit, isDepositing, isDepositSuccess, depositError } = useUnlinkEscrow();
 
   function handlePurchase() {
-    writeContract({
-      address: echoConfig.escrowAddress as `0x${string}`,
-      abi: escrowAbi,
-      functionName: "purchase",
-      args: [listingId],
-      value: listing.price,
-      chain: sepolia,
-    });
+    void unlinkPurchase(listingId, listing.price);
   }
 
   function handleConfirm() {
-    writeContract({
-      address: echoConfig.escrowAddress as `0x${string}`,
-      abi: escrowAbi,
-      functionName: "confirmAndRelease",
-      args: [listingId],
-      chain: sepolia,
-    });
+    void confirmAndRelease(listingId);
   }
 
-  const errorMessage = writeError ? writeError.message.split("\n")[0]?.slice(0, 140) : null;
+  const errorMessage = error ? error.split("\n")[0]?.slice(0, 140) : null;
+  const priceDisplay = `${formatUnits(listing.price, 18)} UNLINK`;
 
   return (
     <div className="overflow-hidden rounded-[8px] border border-white/15 bg-[#0a0a0a]">
@@ -143,7 +118,7 @@ function ListingPanel({
       {/* Infos */}
       <div className="grid gap-px bg-white/10 sm:grid-cols-3">
         {[
-          { label: "Prix", value: `${formatEther(listing.price)} ETH` },
+          { label: "Prix", value: priceDisplay },
           { label: "Durée", value: DURATION_LABELS[listing.duration] ?? "?" },
           {
             label: "Statut",
@@ -181,12 +156,7 @@ function ListingPanel({
         {isSuccess ? (
           <div className="flex items-center gap-2 rounded-[6px] border border-[#9ef7c9]/30 bg-[#9ef7c9]/10 p-3 text-sm text-[#9ef7c9]">
             <Check className="size-4 shrink-0" />
-            Transaction confirmée.
-            {txHash && (
-              <a href={`${echoConfig.registryExplorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer" className="ml-auto flex items-center gap-1 text-xs underline opacity-70">
-                Voir <ExternalLink className="size-3" />
-              </a>
-            )}
+            Transaction envoyée via Unlink · privée.
           </div>
         ) : isSeller ? (
           <div className="flex items-center gap-2 rounded-[6px] border border-white/10 bg-white/5 p-3 text-sm text-white/50">
@@ -196,11 +166,11 @@ function ListingPanel({
         ) : listing.sold && isBuyer && !purchase?.confirmed ? (
           <button
             onClick={handleConfirm}
-            disabled={isPending || isConfirming}
+            disabled={isPending}
             className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#9ef7c9] py-3 font-bold text-[#050505] transition hover:opacity-90 disabled:opacity-50"
           >
             <Check className="size-4" />
-            {isPending || isConfirming ? "Confirmation…" : "Confirmer la réception · libérer les fonds"}
+            {isPending ? "Signature Unlink…" : "Confirmer la réception · libérer les fonds"}
           </button>
         ) : listing.sold && purchase?.confirmed ? (
           <div className="flex items-center gap-2 rounded-[6px] border border-[#9ef7c9]/30 bg-[#9ef7c9]/10 p-3 text-sm text-[#9ef7c9]">
@@ -224,18 +194,22 @@ function ListingPanel({
           <div className="space-y-3">
             <button
               onClick={handlePurchase}
-              disabled={isPending || isConfirming}
+              disabled={isPending}
               className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#f59abd] py-3 font-bold text-[#050505] transition hover:opacity-90 disabled:opacity-50"
             >
               <ShoppingCart className="size-4" />
-              {isPending || isConfirming
-                ? "En attente…"
-                : `Acheter · ${formatEther(listing.price)} ETH`}
+              {isPending ? "Signature Unlink…" : `Acheter · ${priceDisplay}`}
             </button>
             <p className="text-center text-xs text-white/30">
-              Les fonds sont bloqués en escrow sur Sepolia.
-              Vous les libérerez après réception de la licence.
+              Paiement privé via Unlink ExecutionAccount. Fonds bloqués en escrow jusqu&apos;à confirmation.
             </p>
+            <UnlinkDepositPanel
+              isDepositing={isDepositing}
+              isDepositSuccess={isDepositSuccess}
+              depositError={depositError}
+              deposit={deposit}
+              resetDeposit={resetDeposit}
+            />
           </div>
         )}
 
