@@ -48,11 +48,16 @@ export type EchoSimilarTrack = {
   title: string;
   source: string;
   score: number;
-  melody: number;
-  rhythm: number;
-  structure: number;
+  /** undefined = data not available for this analysis step */
+  melody?: number;
+  rhythm?: number;
+  structure?: number;
   key: string;
   BPM?: number;
+  /** MIDI sub-scores from Step 2B (registry matches only) */
+  global_overlap?: number;
+  hook?: number;
+  hook_intervals?: number;
 };
 
 export type EchoReport = {

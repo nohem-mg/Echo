@@ -1,12 +1,13 @@
 // ==========================================================================
-// Echo — Structured CRE logs for Marius report-service / AI enrichment
+// Echo — Structured CRE logs for pipeline monitoring / AI enrichment
 // --------------------------------------------------------------------------
-// Emits grep-friendly JSON lines prefixed with "MariusAI |". Never logs raw
+// Emits grep-friendly JSON lines prefixed with "Logs |". Never logs raw
 // audio bytes, full MIDI sequences, or unreleased acoustic fingerprints.
 // ==========================================================================
 
 import {
   THRESHOLD_ACR_MIN,
+  THRESHOLD_COVER,
   THRESHOLD_PLAGIARISM,
   THRESHOLD_SIMILAR,
   type AcrMatch,
@@ -17,7 +18,7 @@ import {
 
 export type Logger = (message: string) => void;
 
-const PREFIX = "MariusAI |";
+const PREFIX = "Logs |";
 
 export type MidiShape = {
   n_notes?: number;
@@ -170,6 +171,46 @@ export function logPlagiarismHalt(
       step3_commercial: "skipped",
       step4_report: "skipped",
     },
+  });
+}
+
+/** Fail-fast REJECTED — humming/cover match (ACRCloud cover bucket >= 85%). */
+export function logCoverHalt(
+  log: Logger,
+  input: PipelineInput,
+  midiSequence: string,
+  args: {
+    trigger: AcrMatch;
+    allCoverMatches: AcrMatch[];
+    registryMatches: RegistryMatch[];
+    report: ReportResponse;
+    reason: string;
+  },
+): void {
+  const sorted = [...args.allCoverMatches].sort((a, b) => b.confidence_score - a.confidence_score);
+  logJson(log, "fail_fast_cover", {
+    verdict: "REJECTED",
+    step: "2A",
+    algorithm: "ACRCloud humming/cover fingerprint",
+    threshold: THRESHOLD_COVER,
+    reason: args.reason,
+    context: submissionContext(input, midiSequence),
+    trigger_match: serializeAcrMatch(args.trigger, { trigger: true }),
+    cover_ranking: sorted.map((m) =>
+      serializeAcrMatch(m, { trigger: m.ISRC === args.trigger.ISRC && m.confidence_score === args.trigger.confidence_score }),
+    ),
+    registry_context_at_halt: {
+      match_count: args.registryMatches.length,
+      matches: [...args.registryMatches]
+        .sort((a, b) => b.similarity_score - a.similarity_score)
+        .map((m) => serializeRegistryMatch(m)),
+    },
+    report_for_ai: {
+      verdict: args.report.verdict,
+      ai_summary: args.report.ai_summary,
+      similar_tracks: args.report.similar_tracks,
+    },
+    next_steps: { on_chain_seal: false, step3_commercial: "skipped", step4_report: "skipped" },
   });
 }
 
