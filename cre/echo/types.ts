@@ -163,9 +163,10 @@ export type PipelineResult = {
 // --------------------------------------------------------------------------
 // Fail-fast thresholds (doc §3 — non-negotiable invariants)
 // --------------------------------------------------------------------------
-export const THRESHOLD_PLAGIARISM = 95; // 2A: >=95% -> REJECTED (halt)
-export const THRESHOLD_SIMILAR = 75; //    2B: >=75% -> SIMILAR (halt)
-export const THRESHOLD_ACR_MIN = 50; //    2A: <50% -> Step 3 skipped
+export const THRESHOLD_PLAGIARISM = 95; // 2A: >=95% -> REJECTED (halt, acoustic copy)
+export const THRESHOLD_COVER = 85;     // 2A: >=85% -> REJECTED (halt, humming/cover)
+export const THRESHOLD_SIMILAR = 75;   // 2B: >=75% -> SIMILAR (halt, MIDI composition)
+export const THRESHOLD_ACR_MIN = 50;   // 2A: <50%  -> Step 3 skipped
 
 // --------------------------------------------------------------------------
 // Registry.Status enum (Solidity: SEALED=0, REVEALED=1, SIMILAR=2, REJECTED=3)

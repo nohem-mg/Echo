@@ -3,7 +3,8 @@
 // --------------------------------------------------------------------------
 //   Step 1  BasicPitch        audio -> MIDI                    [STOP on failure]
 //   Step 2  2A ∥ 2B           ACRCloud (public) ∥ MIDI (private)
-//             2A >=95% -> REJECTED (halt) | 2B >=75% -> SIMILAR (halt)
+//             2A >=95% -> REJECTED (acoustic copy) | 2A cover >=85% -> REJECTED (humming)
+//             2B >=75% -> SIMILAR (halt)
 //   Step 3  (after 2A, if matches non-empty) MIDI vs commercial
 //   Step 4  (waits for 2B AND 3) acoustic extraction + final report
 // --------------------------------------------------------------------------
@@ -23,6 +24,7 @@ import { createBackendClient, type PipelineClient } from "./client";
 import { dispatchOnChainCallback } from "./evm-callback";
 import {
   logBlockedPipelineSummary,
+  logCoverHalt,
   logPlagiarismHalt,
   logRegistrySimilarHalt,
   logStep2ComparisonSnapshot,
@@ -37,6 +39,7 @@ import {
 } from "./pipeline-events";
 import {
   THRESHOLD_ACR_MIN,
+  THRESHOLD_COVER,
   THRESHOLD_PLAGIARISM,
   THRESHOLD_SIMILAR,
   type CommercialDelta,
@@ -306,6 +309,40 @@ export const runPipelineWithClient = (
           reason,
           client.getAgentAttestations(),
         ),
+        report,
+      };
+    }
+
+    // ---- Fail-fast 2A (cover): humming/cover fingerprint >= 85% ---------
+    const cover = coverMatches.find((m) => m.confidence_score >= THRESHOLD_COVER);
+    if (cover) {
+      const matchLabel = formatAcrMatchLabel(cover);
+      const reason = `ACRCloud cover ${cover.confidence_score}%`;
+      const report = buildPlagiarismReport(cover, `${reason} — reprise/cover détecté`);
+      log(`STOP 2A — cover/humming (${cover.confidence_score}% on ${cover.ISRC ?? "?"})`);
+      logCoverHalt(log, input, midiSequence, {
+        trigger: cover,
+        allCoverMatches: coverMatches,
+        registryMatches,
+        report,
+        reason,
+      });
+      updateStep("02A", {
+        status: "blocked",
+        progress: 100,
+        meta: `Cover: ${matchLabel} · ${cover.confidence_score}%`,
+        reason: `Cover/humming ${cover.confidence_score}% — ${matchLabel}`,
+        detail: JSON.stringify({
+          label: matchLabel,
+          ISRC: cover.ISRC,
+          title: cover.title,
+          artists: cover.artists,
+          score: cover.confidence_score,
+        }),
+      });
+      updateStep("02B", { status: "done", progress: 100, meta: `${registryMatches.length} private match(es)` });
+      return {
+        ...halt(input, "REJECTED", reason, client.getAgentAttestations()),
         report,
       };
     }
