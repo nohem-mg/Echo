@@ -29,7 +29,7 @@ LEGAL FRAMEWORK — analytical method:
 
 class ReportService:
     def __init__(self):
-        self.client = Groq(api_key=settings.groq_api_key)
+        self.client = Groq(api_key=settings.groq_api_key) if settings.groq_api_key else None
 
     def generate(
         self,
@@ -112,6 +112,9 @@ class ReportService:
         if not similar_tracks:
             return "No significant similarity detected. Your track is original and eligible for SEAL."
 
+        if self.client is None:
+            return self._fallback_summary(submitted_track, similar_tracks, verdict)
+
         tracks_str = "\n".join([
             f"- {t.title} ({t.source}): overall {t.score}%, "
             f"melody {t.melody}%, rhythm {t.rhythm}%, structure {t.structure}%"
@@ -129,18 +132,34 @@ Analyze the similarities against the legal framework. Pay special attention to h
 
         logger.info("Calling Groq", extra={"model": settings.groq_model, "similar_count": len(similar_tracks)})
 
-        response = self.client.chat.completions.create(
-            model=settings.groq_model,
-            max_tokens=settings.groq_max_tokens,
-            messages=[
-                {"role": "system", "content": PROMPT_SYSTEM},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.3,
-        )
+        try:
+            response = self.client.chat.completions.create(
+                model=settings.groq_model,
+                max_tokens=settings.groq_max_tokens,
+                messages=[
+                    {"role": "system", "content": PROMPT_SYSTEM},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+            )
+        except Exception as exc:
+            logger.warning("Groq summary failed; using deterministic fallback", extra={"error": str(exc)})
+            return self._fallback_summary(submitted_track, similar_tracks, verdict)
 
         text = response.choices[0].message.content.strip()
         # Strip markdown formatting to ensure clean text output
         text = re.sub(r'\*\*[^*]+\*\*\n?', '', text).strip()
         
         return text
+
+    def _fallback_summary(self, submitted_track: dict, similar_tracks: list[SimilarTrack], verdict: str) -> str:
+        top = similar_tracks[0] if similar_tracks else None
+        if not top:
+            return "No significant similarity detected. Your track is original and eligible for SEAL."
+
+        decision = "blocked from SEAL" if verdict == "SIMILAR" else "eligible for SEAL"
+        return (
+            f"Mocked AI summary. Top match: {top.title} from {top.source} at {top.score}% overall "
+            f"similarity, with melody {top.melody}%, rhythm {top.rhythm}%, and structure {top.structure}%. "
+            f"The deterministic verdict is {verdict}, so the track is {decision}."
+        )

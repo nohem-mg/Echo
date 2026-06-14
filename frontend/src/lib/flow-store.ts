@@ -805,6 +805,22 @@ export async function initializePipeline(input: InitializePipelineInput) {
   const existingSteps = file.pipelineSteps.filter((step) => step.flowId === input.flowId);
 
   if (existingSteps.length > 0) {
+    if (input.ownerAddress) {
+      const now = new Date().toISOString();
+      file.flows = file.flows.map((storedFlow) => {
+        if (storedFlow.id !== input.flowId) {
+          return storedFlow;
+        }
+
+        return {
+          ...storedFlow,
+          ownerAddress: input.ownerAddress as `0x${string}`,
+          updatedAt: now,
+        };
+      });
+      await writeFlowFile(file);
+    }
+
     return existingSteps.sort(sortPipelineSteps);
   }
 

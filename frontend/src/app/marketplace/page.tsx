@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import {
@@ -18,6 +18,7 @@ import {
 import { formatUnits, type Abi } from "viem";
 import {
   useAccount,
+  usePublicClient,
   useReadContract,
   useReadContracts,
 } from "wagmi";
@@ -35,6 +36,8 @@ const LICENSE_DESCRIPTIONS = [
   "Cession complète des droits d'utilisation.",
 ] as const;
 const DURATION_LABELS = ["1 an", "Perpétuel"] as const;
+const EVENT_LOOKBACK_BLOCKS = BigInt(49_000);
+const GENESIS_BLOCK = BigInt(0);
 
 type Listing = {
   trackId: `0x${string}`;
@@ -52,6 +55,12 @@ type Purchase = {
   amount: bigint;
   confirmed: boolean;
   purchasedAt: bigint;
+};
+
+type LicenseEventRefs = {
+  listingId: `0x${string}`;
+  purchaseTxHash?: `0x${string}`;
+  confirmTxHash?: `0x${string}`;
 };
 
 function shortHex(hex: string) {
@@ -81,21 +90,78 @@ function ListingPanel({
     query: { enabled: listing.sold },
   }) as { data: Purchase | undefined };
 
-  const isBuyer = purchase?.buyer?.toLowerCase() === connectedAddress?.toLowerCase();
+  const publicClient = usePublicClient({ chainId: echoConfig.registryChainId });
+  const [eventRefs, setEventRefs] = useState<LicenseEventRefs | null>(null);
   const isSeller = listing.seller.toLowerCase() === connectedAddress?.toLowerCase();
 
-  const { purchase: unlinkPurchase, confirmAndRelease, isPending, isSuccess, error, reset, deposit, resetDeposit, isDepositing, isDepositSuccess, depositError } = useUnlinkEscrow();
+  const { purchase: unlinkPurchase, confirmAndRelease, isPending, isSuccess, error, reset, txHash: latestTxHash, deposit, resetDeposit, isDepositing, isDepositSuccess, depositError } = useUnlinkEscrow();
+
+  useEffect(() => {
+    const client = publicClient;
+    const escrowAddress = echoConfig.escrowAddress as `0x${string}` | undefined;
+    if (!client || !listing.sold || !escrowAddress) return;
+
+    let cancelled = false;
+
+    async function loadLicenseEvents(
+      client: NonNullable<typeof publicClient>,
+      escrowAddress: `0x${string}`,
+    ) {
+      try {
+        const latestBlock = await client.getBlockNumber();
+        const fromBlock = latestBlock > EVENT_LOOKBACK_BLOCKS ? latestBlock - EVENT_LOOKBACK_BLOCKS : GENESIS_BLOCK;
+        const [purchaseEvents, confirmEvents] = await Promise.all([
+          client.getContractEvents({
+            address: escrowAddress,
+            abi: escrowAbi,
+            eventName: "LicensePurchased",
+            args: { listingId },
+            fromBlock,
+          }),
+          client.getContractEvents({
+            address: escrowAddress,
+            abi: escrowAbi,
+            eventName: "LicenseConfirmed",
+            args: { listingId },
+            fromBlock,
+          }),
+        ]);
+
+        if (cancelled) return;
+
+        setEventRefs({
+          listingId,
+          purchaseTxHash: purchaseEvents.at(-1)?.transactionHash,
+          confirmTxHash: confirmEvents.at(-1)?.transactionHash,
+        });
+      } catch {
+        if (!cancelled) {
+          setEventRefs({ listingId });
+        }
+      }
+    }
+
+    void loadLicenseEvents(client, escrowAddress);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [listing.sold, listingId, publicClient]);
 
   function handlePurchase() {
     void unlinkPurchase(listingId, listing.price);
   }
 
   function handleConfirm() {
-    void confirmAndRelease(listingId);
+    if (!purchase) return;
+    void confirmAndRelease(listingId, purchase.buyer);
   }
 
   const errorMessage = error ? error.split("\n")[0]?.slice(0, 140) : null;
   const priceDisplay = `${formatUnits(listing.price, 18)} UNLINK`;
+  const currentEventRefs = eventRefs?.listingId === listingId ? eventRefs : null;
+  const purchaseTxHash = currentEventRefs?.purchaseTxHash ?? latestTxHash;
+  const confirmTxHash = currentEventRefs?.confirmTxHash;
 
   return (
     <div className="overflow-hidden rounded-[8px] border border-white/15 bg-[#0a0a0a]">
@@ -149,33 +215,112 @@ function ListingPanel({
           Track ID on-chain :{" "}
           <code className="text-white/50">{listing.trackId}</code>
         </p>
+        <div className="mt-4 rounded-[6px] border border-white/10 bg-white/[0.03] p-3">
+          <p className="text-xs uppercase tracking-wider text-white/35">License ID / listingId</p>
+          <code className="mt-1 block break-all font-mono text-xs text-[#9ef7c9]">{listingId}</code>
+          <div className="mt-3 border-t border-white/10 pt-3">
+            <p className="text-xs uppercase tracking-wider text-white/35">Escrow contract</p>
+            <a
+              className="mt-1 inline-flex items-center gap-1 break-all font-mono text-xs text-white/65 underline"
+              href={`${echoConfig.registryExplorer}/address/${echoConfig.escrowAddress}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {echoConfig.escrowAddress}
+              <ArrowUpRight className="size-3 shrink-0" />
+            </a>
+          </div>
+          <div className="mt-3 grid gap-2 text-xs text-white/45">
+            <p>
+              Check listing: <code className="text-white/65">LicenseEscrow.getListing({shortHex(listingId)})</code>
+            </p>
+            <p>
+              Check achat: <code className="text-white/65">LicenseEscrow.getPurchase({shortHex(listingId)})</code>
+            </p>
+          </div>
+          {listing.sold && purchase ? (
+            <div className="mt-3 space-y-1 border-t border-white/10 pt-3 text-xs">
+              <p className="text-white/45">
+                Acheteur Unlink: <code className="text-white/65">{shortHex(purchase.buyer)}</code>
+              </p>
+              <p className="text-white/45">
+                Vendeur Unlink: <code className="text-white/65">{shortHex(listing.seller)}</code>
+              </p>
+              <p className="text-white/45">
+                Montant: <span className="font-mono text-white/65">{formatUnits(purchase.amount, 18)} UNLINK</span>
+              </p>
+              <p className="text-white/45">
+                Vendeur payé:{" "}
+                <span className={purchase.confirmed ? "font-mono text-[#9ef7c9]" : "font-mono text-[#ffd166]"}>
+                  {purchase.confirmed ? "oui · release atomique" : "non · ancien achat en escrow"}
+                </span>
+              </p>
+            </div>
+          ) : null}
+          {purchaseTxHash ? (
+            <a
+              className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#f59abd] underline"
+              href={`${echoConfig.registryExplorer}/tx/${purchaseTxHash}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Purchase / release tx {shortHex(purchaseTxHash)}
+              <ArrowUpRight className="size-3" />
+            </a>
+          ) : null}
+          {confirmTxHash ? (
+            <a
+              className="ml-3 mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#9ef7c9] underline"
+              href={`${echoConfig.registryExplorer}/tx/${confirmTxHash}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Confirm tx {shortHex(confirmTxHash)}
+              <ArrowUpRight className="size-3" />
+            </a>
+          ) : null}
+        </div>
       </div>
 
       {/* Action */}
       <div className="border-t border-white/10 p-5 sm:p-6">
         {isSuccess ? (
-          <div className="flex items-center gap-2 rounded-[6px] border border-[#9ef7c9]/30 bg-[#9ef7c9]/10 p-3 text-sm text-[#9ef7c9]">
-            <Check className="size-4 shrink-0" />
-            Transaction envoyée via Unlink · privée.
+          <div className="rounded-[6px] border border-[#9ef7c9]/30 bg-[#9ef7c9]/10 p-3 text-sm text-[#9ef7c9]">
+            <div className="flex items-center gap-2">
+              <Check className="size-4 shrink-0" />
+              Achat envoyé via Unlink · paiement vendeur atomique.
+            </div>
+            <p className="mt-2 break-all font-mono text-xs text-[#9ef7c9]/80">License ID: {listingId}</p>
+            {latestTxHash ? (
+              <a
+                href={`${echoConfig.registryExplorer}/tx/${latestTxHash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex items-center gap-1 text-xs underline"
+              >
+                Tx {shortHex(latestTxHash)}
+                <ArrowUpRight className="size-3" />
+              </a>
+            ) : null}
           </div>
         ) : isSeller ? (
           <div className="flex items-center gap-2 rounded-[6px] border border-white/10 bg-white/5 p-3 text-sm text-white/50">
             <Tag className="size-4" />
             Vous êtes le vendeur de ce listing.
           </div>
-        ) : listing.sold && isBuyer && !purchase?.confirmed ? (
+        ) : listing.sold && connectedAddress && purchase && !purchase.confirmed ? (
           <button
             onClick={handleConfirm}
             disabled={isPending}
             className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#9ef7c9] py-3 font-bold text-[#050505] transition hover:opacity-90 disabled:opacity-50"
           >
             <Check className="size-4" />
-            {isPending ? "Signature Unlink…" : "Confirmer la réception · libérer les fonds"}
+            {isPending ? "Signature Unlink…" : "Libérer les fonds legacy"}
           </button>
         ) : listing.sold && purchase?.confirmed ? (
           <div className="flex items-center gap-2 rounded-[6px] border border-[#9ef7c9]/30 bg-[#9ef7c9]/10 p-3 text-sm text-[#9ef7c9]">
             <Check className="size-4" />
-            Licence achetée et confirmée.
+            Licence achetée · vendeur payé.
           </div>
         ) : listing.sold ? (
           <div className="flex items-center gap-2 rounded-[6px] border border-white/10 bg-white/5 p-3 text-sm text-white/40">
@@ -201,7 +346,7 @@ function ListingPanel({
               {isPending ? "Signature Unlink…" : `Acheter · ${priceDisplay}`}
             </button>
             <p className="text-center text-xs text-white/30">
-              Paiement privé via Unlink ExecutionAccount. Fonds bloqués en escrow jusqu&apos;à confirmation.
+              Paiement privé via Unlink ExecutionAccount. Achat et release vendeur sont batchés dans un seul execute().
             </p>
             <UnlinkDepositPanel
               isDepositing={isDepositing}

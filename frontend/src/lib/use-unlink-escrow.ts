@@ -49,6 +49,18 @@ async function runExecute(
   return { executionId: result.executionId, txHash: result.handleOpsTxHash };
 }
 
+async function runExecuteAccountCall(
+  client: UnlinkClient,
+  params: Parameters<UnlinkClient["executeAccountCall"]>[0],
+): Promise<{ executionId: string; txHash: string | null }> {
+  const result = await client.executeAccountCall(params);
+  if (REVERTED_STATUSES.has(result.status)) {
+    const txPart = result.handleOpsTxHash ? ` — tx: ${result.handleOpsTxHash}` : "";
+    throw new Error(`Revert on-chain (${result.status})${txPart}`);
+  }
+  return { executionId: result.executionId, txHash: result.handleOpsTxHash };
+}
+
 export function useUnlinkEscrow() {
   const clientRef = useRef<UnlinkClient | null>(null);
   const [state, setState] = useState<EscrowState>({ status: "idle" });
@@ -142,12 +154,18 @@ export function useUnlinkEscrow() {
           functionName: "purchase",
           args: [listingId],
         });
+        const releaseData = encodeFunctionData({
+          abi: escrowAbi,
+          functionName: "confirmAndRelease",
+          args: [listingId],
+        });
         const { executionId, txHash } = await runExecute(client, {
           token: echoConfig.unlinkTokenAddress,
           amount: price.toString(),
           calls: [
             { target: echoConfig.unlinkTokenAddress, value: "0", data: approveData },
             { target: echoConfig.escrowAddress, value: "0", data: purchaseData },
+            { target: echoConfig.escrowAddress, value: "0", data: releaseData },
           ],
         });
         setState({ status: "success", executionId, txHash });
@@ -161,18 +179,21 @@ export function useUnlinkEscrow() {
   );
 
   const confirmAndRelease = useCallback(
-    async (listingId: `0x${string}`) => {
+    async (listingId: `0x${string}`, buyerAddress: `0x${string}`) => {
       setState({ status: "pending", action: "confirmAndRelease" });
       try {
         const client = await getClient();
+        const buyerAccount = await client.executionAccounts.getByAddress({ address: buyerAddress });
+        if (!buyerAccount) {
+          throw new Error("Ce wallet ne contrôle pas l'ExecutionAccount acheteur de cette licence.");
+        }
         const data = encodeFunctionData({
           abi: escrowAbi,
           functionName: "confirmAndRelease",
           args: [listingId],
         });
-        const { executionId, txHash } = await runExecute(client, {
-          token: echoConfig.unlinkTokenAddress,
-          amount: "1",
+        const { executionId, txHash } = await runExecuteAccountCall(client, {
+          accountIndex: buyerAccount.account_index,
           calls: [{ target: echoConfig.escrowAddress, value: "0", data }],
         });
         setState({ status: "success", executionId, txHash });

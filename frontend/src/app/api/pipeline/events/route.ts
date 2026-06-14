@@ -11,8 +11,13 @@ import {
   updatePipelineStep,
 } from "@/lib/flow-store";
 import type { EchoFlowStatus, EchoPipelineStatus, EchoReport } from "@/lib/types";
-import { deriveOwnerKey } from "@/lib/registry-handoff";
-import { keccak256 } from "viem";
+import {
+  deriveOwnerKey,
+  isTrackRegisteredOnChain,
+  parseTrackSealedTrackId,
+} from "@/lib/registry-handoff";
+import { createPublicClient, http, keccak256 } from "viem";
+import { sepolia } from "viem/chains";
 
 type PipelineEventRequest = {
   flowId?: string;
@@ -31,6 +36,7 @@ type PipelineEventRequest = {
 };
 
 const PIPELINE_FLOW_STATUSES = new Set(["pipeline_completed", "pipeline_blocked", "error"]);
+const DEFAULT_SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com";
 
 export const runtime = "nodejs";
 
@@ -67,27 +73,20 @@ export async function POST(request: Request): Promise<Response> {
 
     const flowStatus = resolveFlowStatus(body);
     let registryTrackId = body.registryTrackId;
+    let registryTxHash = body.registryTxHash;
 
     if (flowStatus === "pipeline_completed") {
-      if (!registryTrackId) {
-        const commitmentHash = body.commitmentHash ?? existingFlow.commitmentHash;
-        if (commitmentHash) {
-          const owner = existingFlow.ownerAddress ?? deriveOwnerKey(existingFlow.walletAddress, existingFlow.nullifierHash);
-          const paddedOwner = owner.toLowerCase().replace("0x", "").padStart(64, "0");
-          const cleanCommitment = commitmentHash.toLowerCase().replace("0x", "");
-          const encoded = `0x${paddedOwner}${cleanCommitment}` as `0x${string}`;
-          registryTrackId = keccak256(encoded);
-        }
-      }
+      registryTrackId = await resolveConfirmedRegistryTrackId(body, existingFlow);
+      registryTxHash = registryTrackId ? body.registryTxHash : undefined;
 
       await completePipeline({
         flowId: body.flowId,
         report: body.report,
         registryTrackId: registryTrackId,
-        registryTxHash: body.registryTxHash,
+        registryTxHash,
         registryRef: body.registryRef,
         commitmentHash: body.commitmentHash,
-        clearRegistryTxHash: !body.registryTxHash,
+        clearRegistryTxHash: !registryTxHash,
       });
     } else if (flowStatus === "pipeline_blocked") {
       await blockPipeline({
@@ -170,4 +169,69 @@ function resolveFlowStatus(body: PipelineEventRequest) {
   }
 
   return undefined;
+}
+
+async function resolveConfirmedRegistryTrackId(
+  body: PipelineEventRequest,
+  existingFlow: Awaited<ReturnType<typeof getFlow>>,
+): Promise<`0x${string}` | undefined> {
+  if (!existingFlow) {
+    return undefined;
+  }
+
+  const registryAddress = getRegistryAddress();
+  if (!registryAddress) {
+    return body.registryTrackId;
+  }
+
+  const client = getRegistryClient();
+  const commitmentHash = body.commitmentHash ?? existingFlow.commitmentHash;
+
+  if (body.registryTxHash) {
+    try {
+      const receipt = await client.getTransactionReceipt({ hash: body.registryTxHash });
+      if (receipt.status === "success") {
+        const sealedTrackId = parseTrackSealedTrackId(receipt.logs, registryAddress, commitmentHash);
+        if (sealedTrackId) {
+          return sealedTrackId;
+        }
+      }
+    } catch {
+      // Receipt can be temporarily unavailable; do not persist an unverified track id.
+    }
+  }
+
+  if (body.registryTrackId && await isTrackRegisteredOnChain(client, registryAddress, body.registryTrackId)) {
+    return body.registryTrackId;
+  }
+
+  if (!commitmentHash) {
+    return undefined;
+  }
+
+  const owner = existingFlow.ownerAddress ?? deriveOwnerKey(existingFlow.walletAddress, existingFlow.nullifierHash);
+  const candidate = deriveRegistryTrackId(owner, commitmentHash);
+  if (await isTrackRegisteredOnChain(client, registryAddress, candidate)) {
+    return candidate;
+  }
+
+  return undefined;
+}
+
+function deriveRegistryTrackId(owner: `0x${string}` | string, commitmentHash: `0x${string}`): `0x${string}` {
+  const paddedOwner = owner.toLowerCase().replace("0x", "").padStart(64, "0");
+  const cleanCommitment = commitmentHash.toLowerCase().replace("0x", "");
+  return keccak256(`0x${paddedOwner}${cleanCommitment}` as `0x${string}`);
+}
+
+function getRegistryAddress(): `0x${string}` | undefined {
+  const address = process.env.NEXT_PUBLIC_REGISTRY_ADDRESS;
+  return address?.startsWith("0x") ? (address as `0x${string}`) : undefined;
+}
+
+function getRegistryClient() {
+  return createPublicClient({
+    chain: sepolia,
+    transport: http(process.env.SEPOLIA_RPC_URL || DEFAULT_SEPOLIA_RPC_URL),
+  });
 }

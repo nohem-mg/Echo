@@ -31,7 +31,7 @@
 ## Network
 
 - Chain: Ethereum Sepolia (chain ID 11155111)
-- Registry contract: `0xd2A1ec2a6Ef3973A1519E9aaf0A77c01955E0f72`
+- Registry contract: `0x0E0f9A9e1D5d5825F7590E04EbBcAdBFB8365148`
 - ABI: `contracts/out/Registry.sol/Registry.json`
 
 ---
@@ -109,4 +109,3 @@ trackId   = keccak256(abi.encode(owner, commitmentHash))   // derived on-chain
 ```
 
 ---
-
