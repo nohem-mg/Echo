@@ -42,6 +42,7 @@ const REPORT: ReportResponse = {
 // Builds a fake client; any step can be overridden to throw or return data.
 const makeClient = (opts: {
   matches?: CheckPublicResponse["matches"];
+  coverMatches?: CheckPublicResponse["cover_matches"];
   registry?: RegistryMatch[];
   commercial?: CommercialDelta[];
   report?: ReportResponse;
@@ -56,7 +57,8 @@ const makeClient = (opts: {
   };
   const client: PipelineClient = {
     convert: () => guard("convert", { midiSequence: "midi://x" }),
-    checkPublic: () => guard("checkPublic", { matches: opts.matches ?? [] }),
+    checkPublic: () =>
+      guard("checkPublic", { matches: opts.matches ?? [], cover_matches: opts.coverMatches ?? [] }),
     comparePrivate: () =>
       guard<ComparePrivateResponse>("comparePrivate", { registry_matches: opts.registry ?? [] }),
     compareCommercial: () =>
@@ -124,6 +126,27 @@ describe("fail-fast — Step 2B (similarity >= 75%)", () => {
 
     expect(res.verdict).toBe("CLEAN");
   });
+
+  test("SIMILAR report carries informational cover references", () => {
+    const { client } = makeClient({
+      matches: [],
+      coverMatches: [
+        {
+          ISRC: "USAT21000476",
+          confidence_score: 0.96,
+          title: "Airplanes (feat. Hayley Williams)",
+          artists: ["B.o.B"],
+        },
+      ],
+      registry: [{ track_id: "t1", similarity_score: 81 }],
+    });
+
+    const res = runPipelineWithClient(noop, client, INPUT);
+
+    expect(res.verdict).toBe("SIMILAR");
+    expect(res.report?.public_references?.[0]?.title).toContain("Airplanes");
+    expect(res.report?.public_references?.[0]?.score).toBe(0.96);
+  });
 });
 
 describe("fail-fast — HTTP / timeout error on any step", () => {
@@ -187,6 +210,24 @@ describe("happy path", () => {
     expect(calls).not.toContain("compareCommercial");
     expect(calls).toContain("report");
     expect(calls).toContain("register");
+  });
+
+  test("CLEAN report carries informational cover references", () => {
+    const { client } = makeClient({
+      coverMatches: [
+        {
+          ISRC: "USAT21000476",
+          confidence_score: 0.96,
+          title: "Airplanes (feat. Hayley Williams)",
+          artists: ["B.o.B"],
+        },
+      ],
+    });
+
+    const res = runPipelineWithClient(noop, client, INPUT);
+
+    expect(res.verdict).toBe("CLEAN");
+    expect(res.report?.public_references).toHaveLength(1);
   });
 
   test("REJECTED does not call register", () => {

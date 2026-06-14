@@ -1,34 +1,17 @@
 [project]
-name = "echo-report-service"
+name = "report-service"
 version = "0.1.0"
-description = "Echo — pipeline Step 4: acoustic extraction + final ranked report."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "uvicorn[standard]>=0.29",
-    "pydantic-settings>=2.2",
-    "librosa>=0.10",
-    "numpy>=1.26",
-    "soundfile>=0.12",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic-settings>=2.0",
+    "groq>=0.9",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    "httpx>=0.27",
-]
-
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-include = ["app*"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
 
 [tool.pytest.ini_options]
-pythonpath = [".", "tests"]
-testpaths = ["tests"]
 asyncio_mode = "auto"
-
-[tool.pyrefly]
-search-path = [".", "tests", "../../packages/echo-common"]

@@ -87,7 +87,7 @@ function formatAcrLabel(match: AcrMatch): string {
   if (artists && match.title) return `${artists} — ${match.title}`;
   if (match.title) return match.title;
   if (artists) return artists;
-  return match.ISRC ? `ISRC ${match.ISRC}` : "Enregistrement public identifié";
+  return match.ISRC ? `ISRC ${match.ISRC}` : "Identified public recording";
 }
 
 /** Snapshot after Step 2 — useful even when the pipeline continues. */

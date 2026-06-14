@@ -47,6 +47,7 @@ import {
   type PipelineResult,
   type AgentAttestation,
   type AcrMatch,
+  type PublicReference,
   type RegistryMatch,
   type ReportResponse,
 } from "./types";
@@ -107,54 +108,82 @@ const formatAcrMatchLabel = (match: AcrMatch): string => {
   if (artists) {
     return artists;
   }
-  return match.ISRC ? `ISRC ${match.ISRC}` : "Enregistrement public identifié";
+  return match.ISRC ? `ISRC ${match.ISRC}` : "Identified public recording";
 };
 
-const buildPlagiarismReport = (match: AcrMatch, reason: string): ReportResponse => {
-  const label = formatAcrMatchLabel(match);
-  return {
-    verdict: "REJECTED",
-    similar_tracks: [
-      {
-        rank: 1,
-        title: label,
-        source: "ACRCloud",
-        score: match.confidence_score,
-        // ACRCloud returns a single confidence score — no breakdown by dimension
-        key: match.ISRC ? `ISRC ${match.ISRC}` : "—",
-      },
-    ],
-    ai_summary: `${reason}. Correspondance acoustique avec « ${label} ».`,
-  };
+const buildPublicReferences = (coverMatches: AcrMatch[]): PublicReference[] =>
+  [...coverMatches]
+    .sort((a, b) => b.confidence_score - a.confidence_score)
+    .map((match, index) => ({
+      rank: index + 1,
+      title: formatAcrMatchLabel(match),
+      artists: match.artists,
+      ISRC: match.ISRC || undefined,
+      score: match.confidence_score,
+      source: "ACRCloud Cover" as const,
+    }));
+
+const attachPublicReferences = (report: ReportResponse, coverMatches: AcrMatch[]): ReportResponse => {
+  const public_references = buildPublicReferences(coverMatches);
+  if (public_references.length === 0) {
+    return report;
+  }
+  return { ...report, public_references };
 };
 
-const buildSimilarRegistryReport = (match: RegistryMatch, reason: string): ReportResponse => {
+const buildPlagiarismReport = (match: AcrMatch, reason: string, coverMatches: AcrMatch[] = []): ReportResponse =>
+  attachPublicReferences(
+    {
+      verdict: "REJECTED",
+      similar_tracks: [
+        {
+          rank: 1,
+          title: formatAcrMatchLabel(match),
+          source: "ACRCloud",
+          score: match.confidence_score,
+          // ACRCloud returns a single confidence score — no breakdown by dimension
+          key: match.ISRC ? `ISRC ${match.ISRC}` : "—",
+        },
+      ],
+      ai_summary: `${reason}. Acoustic match with « ${formatAcrMatchLabel(match)} ».`,
+    },
+    coverMatches,
+  );
+
+const buildSimilarRegistryReport = (
+  match: RegistryMatch,
+  reason: string,
+  coverMatches: AcrMatch[] = [],
+): ReportResponse => {
   const globalOverlap = match.global_overlap ?? match.similarity_score;
   const hookStrength = match.hook ?? match.similarity_score;
   const hookLen = match.hook_intervals ?? 0;
   const scoreStr = (n: number) => (n % 1 === 0 ? `${n}` : n.toFixed(1));
   const keyLabel = hookLen > 0 ? `${hookLen} intv.` : "MIDI";
-  const summaryParts = [`mélodie globale: ${scoreStr(globalOverlap)}%`, `phrase distinctive: ${scoreStr(hookStrength)}%`];
-  if (hookLen > 0) summaryParts.push(`longueur: ${hookLen} intervalles`);
-  return {
-    verdict: "SIMILAR",
-    similar_tracks: [
-      {
-        rank: 1,
-        title: `Track privée ${match.track_id.slice(0, 12)}…`,
-        source: "Registre privé",
-        score: match.similarity_score,
-        melody: globalOverlap,
-        // rhythm: not measured — MIDI algo compares pitch intervals only, not timing
-        structure: hookStrength,
-        key: keyLabel,
-        global_overlap: globalOverlap,
-        hook: hookStrength,
-        hook_intervals: hookLen,
-      },
-    ],
-    ai_summary: `Similarité ${scoreStr(match.similarity_score)}% vs registre privé — ${summaryParts.join(", ")}.`,
-  };
+  const summaryParts = [`global melody: ${scoreStr(globalOverlap)}%`, `distinctive phrase: ${scoreStr(hookStrength)}%`];
+  if (hookLen > 0) summaryParts.push(`length: ${hookLen} intervals`);
+  return attachPublicReferences(
+    {
+      verdict: "SIMILAR",
+      similar_tracks: [
+        {
+          rank: 1,
+          title: `Private track ${match.track_id.slice(0, 12)}…`,
+          source: "Private registry",
+          score: match.similarity_score,
+          melody: globalOverlap,
+          // rhythm: not measured — MIDI algo compares pitch intervals only, not timing
+          structure: hookStrength,
+          key: keyLabel,
+          global_overlap: globalOverlap,
+          hook: hookStrength,
+          hook_intervals: hookLen,
+        },
+      ],
+      ai_summary: `${scoreStr(match.similarity_score)}% similarity vs private registry — ${summaryParts.join(", ")}.`,
+    },
+    coverMatches,
+  );
 };
 
 // Fail-fast halt: returns a terminal verdict with no partial state.
@@ -278,7 +307,7 @@ export const runPipelineWithClient = (
     if (plagiarism) {
       const matchLabel = formatAcrMatchLabel(plagiarism);
       const reason = `ACRCloud plagiarism ${plagiarism.confidence_score}%`;
-      const report = buildPlagiarismReport(plagiarism, reason);
+      const report = buildPlagiarismReport(plagiarism, reason, coverMatches);
       log(`STOP 2A — plagiarism (${plagiarism.confidence_score}% on ${plagiarism.ISRC})`);
       logPlagiarismHalt(log, input, midiSequence, {
         trigger: plagiarism,
@@ -318,7 +347,7 @@ export const runPipelineWithClient = (
     if (cover) {
       const matchLabel = formatAcrMatchLabel(cover);
       const reason = `ACRCloud cover ${cover.confidence_score}%`;
-      const report = buildPlagiarismReport(cover, `${reason} — reprise/cover détecté`);
+      const report = buildPlagiarismReport(cover, `${reason} — cover detected`, coverMatches);
       log(`STOP 2A — cover/humming (${cover.confidence_score}% on ${cover.ISRC ?? "?"})`);
       logCoverHalt(log, input, midiSequence, {
         trigger: cover,
@@ -351,7 +380,7 @@ export const runPipelineWithClient = (
     const similar = registryMatches.find((m) => m.similarity_score >= THRESHOLD_SIMILAR);
     if (similar) {
       const reason = `private registry match ${similar.similarity_score}%`;
-      const report = buildSimilarRegistryReport(similar, reason);
+      const report = buildSimilarRegistryReport(similar, reason, coverMatches);
       log(`STOP 2B — SIMILAR (${similar.similarity_score}% vs ${similar.track_id})`);
       logRegistrySimilarHalt(log, input, midiSequence, {
         trigger: similar,
@@ -402,14 +431,17 @@ export const runPipelineWithClient = (
     // ---- Step 4 — waits for 2B AND 3: acoustic extraction + report -------
     log("Step 4 — acoustic extraction (raw audio) + final report");
     updateStep("04", { status: "running", progress: 20, meta: "Generating report" });
-    const report = client
-      .report({
-        audioRef: input.audioRef,
-        midiSequence,
-        registry_matches: registryMatches,
-        commercial_deltas: commercialDeltas,
-      })
-      .result();
+    const report = attachPublicReferences(
+      client
+        .report({
+          audioRef: input.audioRef,
+          midiSequence,
+          registry_matches: registryMatches,
+          commercial_deltas: commercialDeltas,
+        })
+        .result(),
+      coverMatches,
+    );
 
     const submitted = report.submitted_track;
     log(

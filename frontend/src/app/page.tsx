@@ -22,15 +22,21 @@ import {
   QrCode as QrCodeIcon,
   Radio,
   Sparkles,
+  Tag,
   Upload,
+  Volume2,
+  VolumeX,
   WalletCards,
   Waves,
   X,
 } from "lucide-react";
-import { toHex, type Abi } from "viem";
+import { parseEther, toHex, type Abi } from "viem";
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
+import { echoSounds } from "@/lib/sound-design";
+import { useEchoSoundEffects } from "@/lib/use-echo-sound-effects";
+import escrowAbiJson from "@/lib/abi/LicenseEscrow.json";
 import { useFlowHistory } from "@/lib/use-flow-history";
 import {
   buildFlowCommitmentHash,
@@ -77,6 +83,165 @@ type SoundCloudPublishState =
 type ReportTableMatch = EchoSimilarTrack & {
   keyLabel: string;
 };
+
+const escrowAbi = escrowAbiJson.abi as Abi;
+const LICENSE_LABELS = ["Sync", "Beat", "Full"] as const;
+const DURATION_LABELS = ["1 an", "Perpétuel"] as const;
+
+function SellRightsModal({
+  trackId,
+  onClose,
+}: {
+  trackId: string;
+  onClose: () => void;
+}) {
+  const [priceInput, setPriceInput] = useState("0.05");
+  const [licenseType, setLicenseType] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [copied, setCopied] = useState(false);
+
+  const { writeContract, data: txHash, isPending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+    hash: txHash,
+    chainId: sepolia.id,
+  });
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    writeContract({
+      address: echoConfig.escrowAddress as `0x${string}`,
+      abi: escrowAbi,
+      functionName: "createListing",
+      args: [trackId as `0x${string}`, parseEther(priceInput || "0"), licenseType, duration],
+      chain: sepolia,
+    });
+  }
+
+  async function handleCopyTrackId() {
+    await navigator.clipboard.writeText(trackId);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  const errorMessage = writeError ? writeError.message.split("\n")[0]?.slice(0, 140) : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="relative w-full max-w-md rounded-[8px] border border-white/15 bg-[#0a0a0a] p-6 text-[#f8f6ee] shadow-2xl">
+        <button onClick={onClose} className="absolute right-4 top-4 text-white/40 hover:text-white/80" type="button">
+          <X className="size-5" />
+        </button>
+
+        <div className="mb-1 flex items-center gap-2">
+          <Tag className="size-4 text-[#f59abd]" />
+          <p className="text-sm uppercase tracking-wider text-white/45">Vendre mes droits</p>
+        </div>
+        <h2 className="font-display text-2xl font-black">Créer un listing</h2>
+
+        <div className="mt-4 rounded-[6px] border border-white/10 bg-white/5 px-3 py-2">
+          <p className="mb-1 text-xs text-white/40">Track ID à partager avec l&apos;acheteur</p>
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate font-mono text-xs text-[#9ef7c9]">{trackId}</code>
+            <button
+              type="button"
+              onClick={handleCopyTrackId}
+              className="shrink-0 rounded-full border border-white/15 px-2 py-1 text-xs text-white/60 transition hover:border-[#f59abd] hover:text-[#f59abd]"
+            >
+              {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+            </button>
+          </div>
+        </div>
+
+        {isSuccess ? (
+          <div className="mt-5 space-y-3">
+            <div className="flex items-center gap-2 rounded-[6px] border border-[#9ef7c9]/30 bg-[#9ef7c9]/10 p-3 text-sm text-[#9ef7c9]">
+              <Check className="size-4 shrink-0" />
+              Listing créé sur Sepolia.
+              {txHash && (
+                <a href={`${echoConfig.registryExplorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer" className="ml-auto flex items-center gap-1 text-xs underline opacity-70">
+                  Voir <ExternalLink className="size-3" />
+                </a>
+              )}
+            </div>
+            <p className="text-center text-xs text-white/40">
+              Partagez le Track ID ci-dessus avec l&apos;acheteur.
+              <br />
+              Il le saisira sur{" "}
+              <a href="/marketplace" className="text-[#f59abd] underline">
+                /marketplace
+              </a>{" "}
+              pour acheter la licence.
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-white/40">Type de licence</label>
+                <div className="relative">
+                  <select
+                    value={licenseType}
+                    onChange={(e) => setLicenseType(Number(e.target.value))}
+                    className="w-full appearance-none rounded-[6px] border border-white/15 bg-black px-3 py-2 text-sm text-white focus:border-[#f59abd]/50 focus:outline-none"
+                  >
+                    {LICENSE_LABELS.map((label, i) => (
+                      <option key={i} value={i}>{label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2 top-2.5 size-4 text-white/30" />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-white/40">Durée</label>
+                <div className="relative">
+                  <select
+                    value={duration}
+                    onChange={(e) => setDuration(Number(e.target.value))}
+                    className="w-full appearance-none rounded-[6px] border border-white/15 bg-black px-3 py-2 text-sm text-white focus:border-[#f59abd]/50 focus:outline-none"
+                  >
+                    {DURATION_LABELS.map((label, i) => (
+                      <option key={i} value={i}>{label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2 top-2.5 size-4 text-white/30" />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-white/40">Prix (ETH Sepolia)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.001"
+                value={priceInput}
+                onChange={(e) => setPriceInput(e.target.value)}
+                className="w-full rounded-[6px] border border-white/15 bg-black px-3 py-2 text-sm text-white focus:border-[#f59abd]/50 focus:outline-none"
+                placeholder="0.05"
+              />
+            </div>
+
+            {errorMessage && (
+              <div className="flex items-start gap-2 rounded-[6px] border border-[#ff7777]/30 bg-[#ff7777]/10 p-3 text-xs text-[#ff7777]">
+                <span className="shrink-0">Erreur :</span>
+                <span className="break-all">{errorMessage}</span>
+                <button type="button" onClick={reset} className="ml-auto shrink-0 opacity-60 hover:opacity-100"><X className="size-3" /></button>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isPending || isConfirming || !priceInput || Number(priceInput) <= 0}
+              className="w-full rounded-[6px] bg-[#f59abd] py-3 text-sm font-semibold text-[#050505] transition hover:opacity-90 disabled:opacity-50"
+            >
+              {isPending || isConfirming ? "En attente de confirmation…" : `Mettre en vente · ${priceInput || "0"} ETH`}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const pipelineSteps = [
   {
@@ -331,7 +496,7 @@ function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineSt
   const isPlagiarism = blockedStep.stepKey === "02A";
   const matchLabel =
     formatBlockedMatchLabel(parsedDetail, blockedStep.meta) ??
-    (isPlagiarism ? "Correspondance ACRCloud" : "Similarité registre privé");
+    (isPlagiarism ? "ACRCloud match" : "Private registry similarity");
   const isrcKey = parsedDetail?.ISRC ? `ISRC ${parsedDetail.ISRC}` : "—";
 
   return {
@@ -340,14 +505,14 @@ function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineSt
       {
         rank: 1,
         title: matchLabel,
-        source: isPlagiarism ? "ACRCloud" : "Registre privé",
+        source: isPlagiarism ? "ACRCloud" : "Private registry",
         score,
         key: isPlagiarism ? isrcKey : "MIDI",
       },
     ],
     ai_summary: isPlagiarism
-      ? `Plagiat détecté (${fmtScore(score)}%) — correspondance avec « ${matchLabel} ».`
-      : blockedStep.reason ?? flow.error ?? "Analyse interrompue — aucun seal on-chain.",
+      ? `Plagiarism detected (${fmtScore(score)}%) — match with « ${matchLabel} ».`
+      : blockedStep.reason ?? flow.error ?? "Analysis halted — no on-chain seal.",
   };
 }
 
@@ -456,7 +621,9 @@ export default function Home() {
   const [isSealingOnChain, setIsSealingOnChain] = useState(false);
   const [soundCloudTitle, setSoundCloudTitle] = useState("");
   const [soundCloudPublish, setSoundCloudPublish] = useState<SoundCloudPublishState>({ status: "idle" });
+  const [sellModalOpen, setSellModalOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [sfxEnabled, setSfxEnabled] = useState(true);
   const sealAttemptedRef = useRef<string | null>(null);
   const sealInFlightRef = useRef<string | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -499,8 +666,10 @@ export default function Home() {
     shouldUseMockReport && flow?.status === "pipeline_completed" ? mockReports.CLEAN : undefined,
   );
   const reportMatches = useMemo(() => normalizeReportMatches(activeReport), [activeReport]);
+  const publicReferences = useMemo(() => activeReport?.public_references ?? [], [activeReport]);
   const bestReportMatch = getBestMatch(activeReport);
   const hasRegistrySeal = Boolean(flow?.status === "pipeline_completed" && flow.registryTxHash);
+  useEchoSoundEffects(flow, livePipelineSteps, pipelineStarted, hasRegistrySeal);
   const isCleanAndSealed = Boolean(hasRegistrySeal && activeReport?.verdict === "CLEAN");
   const certificateTrackId = flow?.registryTrackId;
   const certificateTxHash = flow?.registryTxHash;
@@ -569,6 +738,11 @@ export default function Home() {
 
     return echoConfig.mockWorldEnabled ? "Demo mode enabled" : "World Developer Portal credentials required";
   }, [audioName, flow, payment, pipelineProgressStatus, pipelineStarted, trackFingerprint, verification]);
+
+  useEffect(() => {
+    setSfxEnabled(!echoSounds.isMuted());
+    echoSounds.installAudioUnlockListeners();
+  }, []);
 
   useEffect(() => {
     if (payment.status !== "pending" || !paymentReceiptError) {
@@ -652,6 +826,7 @@ export default function Home() {
           blockNumber: confirmed.transaction?.blockNumber ?? receiptBlockNumber,
         });
         setPendingQuote(null);
+        echoSounds.paymentSuccess();
       } catch (error) {
         if (cancelled) {
           return;
@@ -1148,7 +1323,6 @@ export default function Home() {
       previewAudioUrlRef.current = null;
     }
 
-    setIsPlaying(false);
     audio?.pause();
 
     if (!audioFile) {
@@ -1183,6 +1357,7 @@ export default function Home() {
     if (audio.paused) {
       try {
         await audio.play();
+        echoSounds.previewPlay();
       } catch {
         setIsPlaying(false);
       }
@@ -1190,6 +1365,7 @@ export default function Home() {
     }
 
     audio.pause();
+    echoSounds.previewPause();
   }
 
   async function restoreFlow(flowId: string) {
@@ -1228,6 +1404,7 @@ export default function Home() {
 
     try {
       setTrackFingerprint(await createAudioFingerprint(file));
+      echoSounds.trackUpload();
     } catch {
       setVerification({
         status: "error",
@@ -1293,6 +1470,7 @@ export default function Home() {
           mode: "mock",
           flow: verified.flow,
         });
+        echoSounds.verifySuccess();
         return;
       }
 
@@ -1377,6 +1555,7 @@ export default function Home() {
         flow: verified.flow,
       });
       setWorldQr(null);
+      echoSounds.verifySuccess();
     } catch (error) {
       setWorldQr(null);
       setVerification({
@@ -1566,10 +1745,12 @@ export default function Home() {
         setPipelineStarted(true);
         setCreDisabled(true);
         setPipelineProgressStatus("Pipeline initialized. Running local simulation...");
+        echoSounds.pipelineStart();
       } else {
         setPipelineStarted(true);
         setCreDisabled(false);
         setPipelineProgressStatus("Confidential analysis pipeline running...");
+        echoSounds.pipelineStart();
       }
     } catch (error) {
       setPipelineProgressStatus(`Pipeline start failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1785,7 +1966,19 @@ export default function Home() {
             <span className="rounded-full border border-white/15 px-4 py-2">NYC 2026</span>
             <span className="rounded-full border border-white/15 px-4 py-2">Artist prior-art</span>
           </div>
-          <WalletConnectControl tone="header" />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="grid size-10 place-items-center rounded-full border border-white/15 text-white/70 transition hover:border-[#f59abd] hover:text-[#f59abd]"
+              data-echo-silent
+              onClick={() => setSfxEnabled(echoSounds.toggle())}
+              aria-label={sfxEnabled ? "Mute interface sounds" : "Enable interface sounds"}
+              title={sfxEnabled ? "Mute interface sounds" : "Enable interface sounds"}
+            >
+              {sfxEnabled ? <Volume2 className="size-4" aria-hidden="true" /> : <VolumeX className="size-4" aria-hidden="true" />}
+            </button>
+            <WalletConnectControl tone="header" />
+          </div>
         </div>
       </div>
 
@@ -1793,7 +1986,7 @@ export default function Home() {
         <div className="noise-layer echo-noise-drift" aria-hidden="true" />
         <div className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[1.02fr_0.98fr] lg:items-start">
           <div className="order-2 relative min-h-[640px] overflow-hidden rounded-[8px] border border-white/15 bg-black px-5 py-6 sm:px-8 lg:order-1 lg:px-10">
-            <div className="halftone echo-halftone absolute -left-24 top-16 size-80 opacity-45" aria-hidden="true" />
+            <div className="halftone echo-halftone pointer-events-none absolute -left-24 top-16 size-80 opacity-45" aria-hidden="true" />
             <div className="echo-starburst absolute right-8 top-8 z-10 hidden rotate-6 bg-[#fff7cf] px-6 py-5 text-center text-[#050505] starburst sm:block">
               <span className="font-hand text-lg">3 seals free</span>
             </div>
@@ -1820,13 +2013,13 @@ export default function Home() {
                     <LockKeyhole className="echo-lock-nudge size-5 text-[#f59abd]" aria-hidden="true" />
                   </div>
                   <p className="max-w-xl text-lg leading-7 text-white/72">
-                    A TEE-attested prior-art record for unreleased music, designed for artists who need proof without public exposure.
+                    Upload your track, run a confidential plagiarism check, and seal a prior-art proof on-chain — reveal it publicly whenever you&apos;re ready.
                   </p>
                 </div>
 
-                <div className="relative mx-auto aspect-square w-full max-w-[280px]">
-                  <VinylVisual isPlaying={isPlaying} />
-                </div>
+            <div className="relative z-20 mx-auto aspect-square w-full max-w-[280px]">
+              <VinylVisual isPlaying={isPlaying} />
+            </div>
               </div>
             </div>
           </div>
@@ -2169,6 +2362,32 @@ export default function Home() {
               {activeReport?.ai_summary ? (
                 <p className="border-t border-white/10 p-4 text-sm leading-6 text-white/65">{activeReport.ai_summary}</p>
               ) : null}
+              {publicReferences.length > 0 ? (
+                <div className="border-t border-[#8fd5ff]/20 bg-[#8fd5ff]/5">
+                  <div className="border-b border-[#8fd5ff]/15 px-5 py-4">
+                    <p className="font-hand text-xl text-[#8fd5ff]">public references detected</p>
+                    <p className="mt-1 text-sm text-white/55">
+                      ACRCloud humming — informational signal (cover block threshold: 85%).
+                    </p>
+                  </div>
+                  <div className="divide-y divide-white/10">
+                    {publicReferences.map((reference) => (
+                      <div className="grid gap-3 px-5 py-4 sm:grid-cols-[1fr_auto]" key={`${reference.ISRC ?? reference.title}-${reference.rank}`}>
+                        <div>
+                          <p className="font-bold text-white/90">{reference.title}</p>
+                          {reference.ISRC ? (
+                            <p className="mt-1 font-mono text-xs text-white/45">{reference.ISRC}</p>
+                          ) : null}
+                        </div>
+                        <div className="text-right">
+                          <p className="font-display text-2xl font-black text-[#8fd5ff]">{fmtScore(reference.score)}%</p>
+                          <p className="text-xs text-white/45">{reference.source}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : verdictInfo.showMatches && activeReport ? (
             <div className="rounded-[8px] border border-white/15 bg-[#080808] p-6 sm:p-8">
@@ -2209,20 +2428,30 @@ export default function Home() {
           ) : flow?.status === "pipeline_blocked" || flow?.status === "error" ? (
             <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/55">
               <p className="font-bold text-white/80">
-                {flow.status === "pipeline_blocked" ? "Analyse terminée — aucun seal on-chain" : "Erreur pipeline"}
+                {flow.status === "pipeline_blocked" ? "Analysis complete — no on-chain seal" : "Pipeline error"}
               </p>
               <p className="mt-3 text-sm leading-6">
                 {activeReport?.ai_summary
                   ?? livePipelineSteps.find((step) => step.status === "blocked")?.reason
                   ?? flow.error
-                  ?? "Aucune transaction Registry n'a été créée."}
+                  ?? "No Registry transaction was created."}
               </p>
+              {flow.error?.includes("Trial épuisé") && (
+                <button 
+                  className="mt-6 inline-flex items-center gap-2 rounded-full border border-[#f59abd]/50 bg-[#f59abd]/10 px-6 py-2.5 text-sm font-bold text-[#f59abd] transition hover:bg-[#f59abd]/20 cursor-not-allowed opacity-70"
+                  disabled
+                >
+                  <Sparkles className="size-4" />
+                  Pay with AgentKit (Coming Soon)
+                </button>
+              )}
             </div>
           ) : (
             <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/45">
               {pipelineStarted ? "Verification in progress..." : "No track has been verified yet."}
             </div>
           )}
+
         </div>
       </section>
 
@@ -2241,11 +2470,11 @@ export default function Home() {
                   This track did not pass the prior-art criteria. Echo has halted the execution to prevent duplicate or plagiarized works from being sealed on-chain.
                 </p>
                 <div className="mt-8 rounded-[8px] border border-[#ff7777]/20 bg-[#ff7777]/10 p-5 text-white/90">
-                  <span className="font-bold text-white">Match détecté :</span>
+                  <span className="font-bold text-white">Match detected:</span>
                   <p className="mt-1 text-sm leading-6">
                     {activeReport?.similar_tracks?.[0]?.title
                       ?? livePipelineSteps.find((step) => step.status === "blocked")?.reason
-                      ?? "Similarité élevée détectée."}
+                      ?? "High similarity detected."}
                   </p>
                   {activeReport?.similar_tracks?.[0]?.score ? (
                     <div className="mt-2 font-mono text-sm text-white/75 space-y-1">
@@ -2257,12 +2486,12 @@ export default function Home() {
                       </p>
                       {activeReport.similar_tracks[0].global_overlap !== undefined && (
                         <p className="text-xs text-white/55">
-                          Mélodie globale: {fmtScore(activeReport.similar_tracks[0].global_overlap)}%
+                          Global melody: {fmtScore(activeReport.similar_tracks[0].global_overlap)}%
                           {activeReport.similar_tracks[0].hook !== undefined && (
-                            <> · Phrase distinctive: {fmtScore(activeReport.similar_tracks[0].hook)}%</>
+                            <> · Distinctive phrase: {fmtScore(activeReport.similar_tracks[0].hook)}%</>
                           )}
                           {activeReport.similar_tracks[0].hook_intervals ? (
-                            <> · {activeReport.similar_tracks[0].hook_intervals} intervalles</>
+                            <> · {activeReport.similar_tracks[0].hook_intervals} intervals</>
                           ) : null}
                         </p>
                       )}
@@ -2270,6 +2499,18 @@ export default function Home() {
                   ) : null}
                   {activeReport?.ai_summary ? (
                     <p className="mt-3 font-mono text-xs text-white/60">{activeReport.ai_summary}</p>
+                  ) : null}
+                  {publicReferences.length > 0 ? (
+                    <div className="mt-4 rounded-[8px] border border-[#8fd5ff]/20 bg-[#8fd5ff]/10 p-4 text-white/85">
+                      <p className="text-sm font-bold text-[#8fd5ff]">Public references also detected</p>
+                      <ul className="mt-2 space-y-1 text-sm text-white/75">
+                        {publicReferences.slice(0, 3).map((reference) => (
+                          <li key={`${reference.ISRC ?? reference.title}-${reference.rank}`}>
+                            {reference.title} · {fmtScore(reference.score)}%
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   ) : null}
                 </div>
               </div>
@@ -2433,9 +2674,39 @@ export default function Home() {
                 ) : null}
               </div>
             </div>
+
+            <div className="mt-6 border-t border-white/10 pt-6">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm uppercase text-white/45">Licensing</p>
+                  <h4 className="mt-1 font-display text-2xl font-black">Sell my rights</h4>
+                </div>
+                <Tag className="size-8 text-[#fff7cf]" aria-hidden="true" />
+              </div>
+
+              {isCleanAndSealed && certificateTrackId ? (
+                <button
+                  className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#fff7cf] px-5 font-black text-[#050505] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!echoConfig.escrowAddress}
+                  onClick={() => setSellModalOpen(true)}
+                  type="button"
+                >
+                  <Tag className="size-5" aria-hidden="true" />
+                  {echoConfig.escrowAddress ? "List for sale" : "Escrow not deployed"}
+                </button>
+              ) : (
+                <p className="rounded-[8px] border border-white/10 px-4 py-3 text-sm font-bold text-white/55">
+                  Rights sales unlock after a CLEAN Registry seal.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </section>
+
+      {sellModalOpen && certificateTrackId && (
+        <SellRightsModal trackId={certificateTrackId} onClose={() => setSellModalOpen(false)} />
+      )}
 
       {worldQr ? <WorldIdQrModal connectorURI={worldQr.connectorURI} imageDataUrl={worldQr.imageDataUrl} onClose={() => setWorldQr(null)} /> : null}
 
@@ -2655,8 +2926,69 @@ function CertificateMetric({ label, value, copyValue }: { label: string; value: 
 }
 
 function VinylVisual({ isPlaying }: { isPlaying: boolean }) {
+  const vinylHoverRef = useRef(false);
+
+  useEffect(() => {
+    if (isPlaying && vinylHoverRef.current) {
+      vinylHoverRef.current = false;
+      echoSounds.vinylHoverStop();
+    }
+  }, [isPlaying]);
+
+  useEffect(() => () => {
+    if (vinylHoverRef.current) {
+      vinylHoverRef.current = false;
+      echoSounds.vinylHoverStop();
+    }
+  }, []);
+
+  function beginVinylHoverFromPointer() {
+    if (isPlaying || vinylHoverRef.current || !echoSounds.hasUserInteracted()) {
+      return;
+    }
+
+    vinylHoverRef.current = true;
+
+    if (echoSounds.isAudioRunning()) {
+      void echoSounds.vinylHoverStart();
+    }
+  }
+
+  function handleVinylPointerDown() {
+    if (isPlaying) {
+      return;
+    }
+
+    vinylHoverRef.current = true;
+    echoSounds.vinylHoverStartFromUserGesture();
+  }
+
+  function handleVinylPointerEnter() {
+    beginVinylHoverFromPointer();
+  }
+
+  function handleVinylPointerLeave() {
+    if (!vinylHoverRef.current) {
+      return;
+    }
+    vinylHoverRef.current = false;
+    echoSounds.vinylHoverStop();
+  }
+
   return (
-    <div className="absolute inset-0 grid place-items-center">
+    <div
+      className="absolute inset-0 grid cursor-pointer place-items-center"
+      onPointerDown={handleVinylPointerDown}
+      onPointerEnter={handleVinylPointerEnter}
+      onPointerLeave={handleVinylPointerLeave}
+      title={
+        echoSounds.isMuted()
+          ? "Enable sounds with the header volume button"
+          : echoSounds.hasUserInteracted()
+            ? "Hover for ambient vinyl sound"
+            : "Click once to activate vinyl sound"
+      }
+    >
       <div
         className={`vinyl relative size-full rounded-full border border-white/20 bg-[#111] ${isPlaying ? "vinyl-spin-fast" : "vinyl-spin-idle"}`}
       >

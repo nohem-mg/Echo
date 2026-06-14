@@ -60,6 +60,15 @@ export type EchoSimilarTrack = {
   hook_intervals?: number;
 };
 
+export type EchoPublicReference = {
+  rank: number;
+  title: string;
+  artists?: string[];
+  ISRC?: string;
+  score: number;
+  source: "ACRCloud Cover";
+};
+
 export type EchoReport = {
   verdict: "CLEAN" | "SIMILAR" | "REJECTED";
   submitted_track?: {
@@ -69,6 +78,7 @@ export type EchoReport = {
     fingerprint?: string;
   };
   similar_tracks: EchoSimilarTrack[];
+  public_references?: EchoPublicReference[];
   ai_summary?: string;
 };
 

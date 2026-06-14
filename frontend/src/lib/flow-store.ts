@@ -1309,6 +1309,7 @@ function normalizeReport(value: unknown): EchoReport | undefined {
       verdict: report.verdict,
       submitted_track: report.submitted_track,
       similar_tracks: report.similar_tracks,
+      public_references: Array.isArray(report.public_references) ? report.public_references : undefined,
       ai_summary: typeof report.ai_summary === "string" ? report.ai_summary : undefined,
     };
   }

@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { http, WagmiProvider } from "wagmi";
 import { sepolia } from "wagmi/chains";
+import EchoButtonSounds from "@/components/echo-button-sounds";
 
 const config = getDefaultConfig({
   appName: "Echo",
@@ -24,7 +25,10 @@ export default function Providers({ children }: { children: ReactNode }) {
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider>{children}</RainbowKitProvider>
+        <RainbowKitProvider>
+          <EchoButtonSounds />
+          {children}
+        </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );
