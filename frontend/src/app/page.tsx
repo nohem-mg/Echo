@@ -30,12 +30,13 @@ const Waves = MockIcon;
 const X = MockIcon;
 import { parseEther, toHex, type Abi } from "viem";
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useUnlinkEscrow } from "@/lib/use-unlink-escrow";
 import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
 import { echoSounds } from "@/lib/sound-design";
 import { useEchoSoundEffects } from "@/lib/use-echo-sound-effects";
-import escrowAbiJson from "@/lib/abi/LicenseEscrow.json";
 import { useFlowHistory } from "@/lib/use-flow-history";
+import { UnlinkDepositPanel } from "@/components/unlink-deposit-panel";
 import {
   buildFlowCommitmentHash,
   buildFlowRegistryRef,
@@ -82,7 +83,6 @@ type ReportTableMatch = EchoSimilarTrack & {
   keyLabel: string;
 };
 
-const escrowAbi = escrowAbiJson.abi as Abi;
 const LICENSE_LABELS = ["Sync", "Beat", "Full"] as const;
 const DURATION_LABELS = ["1 an", "Perpétuel"] as const;
 
@@ -93,26 +93,17 @@ function SellRightsModal({
   trackId: string;
   onClose: () => void;
 }) {
-  const [priceInput, setPriceInput] = useState("0.05");
+  const [priceInput, setPriceInput] = useState("100");
   const [licenseType, setLicenseType] = useState(0);
   const [duration, setDuration] = useState(0);
   const [copied, setCopied] = useState(false);
 
-  const { writeContract, data: txHash, isPending, error: writeError, reset } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash: txHash,
-    chainId: sepolia.id,
-  });
+  const { createListing, isPending, isSuccess, error, reset, txHash: listingTxHash, deposit, resetDeposit, isDepositing, isDepositSuccess, depositError } = useUnlinkEscrow();
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    writeContract({
-      address: echoConfig.escrowAddress as `0x${string}`,
-      abi: escrowAbi,
-      functionName: "createListing",
-      args: [trackId as `0x${string}`, parseEther(priceInput || "0"), licenseType, duration],
-      chain: sepolia,
-    });
+    const price = parseUnits(priceInput || "0", 18);
+    await createListing(trackId as `0x${string}`, price, licenseType, duration);
   }
 
   async function handleCopyTrackId() {
@@ -120,8 +111,6 @@ function SellRightsModal({
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
-
-  const errorMessage = writeError ? writeError.message.split("\n")[0]?.slice(0, 140) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
@@ -150,14 +139,29 @@ function SellRightsModal({
           </div>
         </div>
 
+        <div className="mt-4">
+          <UnlinkDepositPanel
+            isDepositing={isDepositing}
+            isDepositSuccess={isDepositSuccess}
+            depositError={depositError}
+            deposit={deposit}
+            resetDeposit={resetDeposit}
+          />
+        </div>
+
         {isSuccess ? (
           <div className="mt-5 space-y-3">
             <div className="flex items-center gap-2 rounded-[6px] border border-[#9ef7c9]/30 bg-[#9ef7c9]/10 p-3 text-sm text-[#9ef7c9]">
               <Check className="size-4 shrink-0" />
-              Listing créé sur Sepolia.
-              {txHash && (
-                <a href={`${echoConfig.registryExplorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer" className="ml-auto flex items-center gap-1 text-xs underline opacity-70">
-                  Voir <ExternalLink className="size-3" />
+              Listing créé via Unlink · privé.
+              {listingTxHash && (
+                <a
+                  href={`${echoConfig.registryExplorer}/tx/${listingTxHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-auto flex items-center gap-1 text-xs underline opacity-70"
+                >
+                  Etherscan <ExternalLink className="size-3" />
                 </a>
               )}
             </div>
@@ -172,7 +176,7 @@ function SellRightsModal({
             </p>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+          <form onSubmit={(e) => void handleSubmit(e)} className="mt-5 space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-xs text-white/40">Type de licence</label>
@@ -207,32 +211,33 @@ function SellRightsModal({
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-white/40">Prix (ETH Sepolia)</label>
+              <label className="mb-1 block text-xs text-white/40">Prix (UNLINK tokens)</label>
               <input
                 type="number"
                 min="0"
-                step="0.001"
+                step="1"
                 value={priceInput}
                 onChange={(e) => setPriceInput(e.target.value)}
                 className="w-full rounded-[6px] border border-white/15 bg-black px-3 py-2 text-sm text-white focus:border-[#f59abd]/50 focus:outline-none"
-                placeholder="0.05"
+                placeholder="100"
               />
+              <p className="mt-1 text-xs text-white/30">Payé en token Unlink via ExecutionAccount privé</p>
             </div>
 
-            {errorMessage && (
+            {error && (
               <div className="flex items-start gap-2 rounded-[6px] border border-[#ff7777]/30 bg-[#ff7777]/10 p-3 text-xs text-[#ff7777]">
                 <span className="shrink-0">Erreur :</span>
-                <span className="break-all">{errorMessage}</span>
+                <span className="break-all">{error.split("\n")[0]?.slice(0, 140)}</span>
                 <button type="button" onClick={reset} className="ml-auto shrink-0 opacity-60 hover:opacity-100"><X className="size-3" /></button>
               </div>
             )}
 
             <button
               type="submit"
-              disabled={isPending || isConfirming || !priceInput || Number(priceInput) <= 0}
+              disabled={isPending || !priceInput || Number(priceInput) <= 0}
               className="w-full rounded-[6px] bg-[#f59abd] py-3 text-sm font-semibold text-[#050505] transition hover:opacity-90 disabled:opacity-50"
             >
-              {isPending || isConfirming ? "En attente de confirmation…" : `Mettre en vente · ${priceInput || "0"} ETH`}
+              {isPending ? "Signature Unlink en cours…" : `Mettre en vente · ${priceInput || "0"} UNLINK`}
             </button>
           </form>
         )}
@@ -621,7 +626,7 @@ export default function Home() {
   const [soundCloudPublish, setSoundCloudPublish] = useState<SoundCloudPublishState>({ status: "idle" });
   const [sellModalOpen, setSellModalOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [sfxEnabled, setSfxEnabled] = useState(true);
+  const [sfxEnabled, setSfxEnabled] = useState(() => !echoSounds.isMuted());
   const sealAttemptedRef = useRef<string | null>(null);
   const sealInFlightRef = useRef<string | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -738,7 +743,6 @@ export default function Home() {
   }, [audioName, flow, payment, pipelineProgressStatus, pipelineStarted, trackFingerprint, verification]);
 
   useEffect(() => {
-    setSfxEnabled(!echoSounds.isMuted());
     echoSounds.installAudioUnlockListeners();
   }, []);
 
