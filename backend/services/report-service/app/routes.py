@@ -1,67 +1,38 @@
-"""Transport layer — multipart audio + JSON metadata from the dev gateway."""
-
-from __future__ import annotations
-
 import json
-
-from echo_common import audio
-from echo_common.schemas.midi import MidiSequence
-from echo_common.log import get_logger
-from fastapi import APIRouter, File, Form, Request, UploadFile
-
-from .config import settings
-from .schemas import CommercialDeltaIn, RegistryMatchIn, ReportResponse
+import logging
+import tempfile
+from pathlib import Path
+from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from .service import ReportService
+from .schemas import ReportResponse
 
-logger = get_logger(__name__)
-router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
+router = APIRouter()
+_service = ReportService()
 
-
-def _service(request: Request) -> ReportService:
-    return request.app.state.service
-
-
-def _parse_json_list(raw: str, model):
-    try:
-        data = json.loads(raw or "[]")
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid JSON: {exc}") from exc
-    if not isinstance(data, list):
-        raise ValueError("expected JSON array")
-    return [model.model_validate(item) for item in data]
-
-
-@router.post("/report", response_model=ReportResponse, tags=["pipeline"])
-async def report(
-    request: Request,
+@router.post("/api/report", response_model=ReportResponse)
+async def generate_report(
     file: UploadFile = File(...),
+    midiSequence: str = Form(...),
     registry_matches: str = Form("[]"),
     commercial_deltas: str = Form("[]"),
-    midiSequence: str = Form("{}"),
-) -> ReportResponse:
-    """Step 4 — key/BPM/fingerprint from raw audio + ranked similar tracks."""
-    ext = audio.validate_extension(file, settings.allowed_extensions)
-    registry = _parse_json_list(registry_matches, RegistryMatchIn)
-    commercial = _parse_json_list(commercial_deltas, CommercialDeltaIn)
-    midi = MidiSequence.model_validate(json.loads(midiSequence or "{}"))
+):
+    try:
+        midi = json.loads(midiSequence)
+        reg = json.loads(registry_matches)
+        com = json.loads(commercial_deltas)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
 
-    with audio.persist_upload(file, ext, settings.max_upload_bytes) as path:
-        body = _service(request).build_report(
-            path,
-            midi_sequence=midi,
-            registry_matches=registry,
-            commercial_deltas=commercial,
-            request_id=request.state.request_id,
-        )
+    submitted_track = {
+        "key": midi.get("key", ""),
+        "mode": midi.get("mode", ""),
+        "BPM": midi.get("BPM", midi.get("tempo", 0)),
+        "fingerprint": midi.get("fingerprint", ""),
+        "n_notes": midi.get("n_notes", 0),
+        "duration_s": midi.get("duration_s", 0.0),
+    }
 
-    logger.info(
-        "report ok",
-        extra={
-            "context": {
-                "request_id": request.state.request_id,
-                "verdict": body.verdict,
-                "n_similar": len(body.similar_tracks),
-            }
-        },
-    )
-    return body
+    result = _service.generate(submitted_track, reg, com)
+    logger.info("report generated", extra={"verdict": result.verdict})
+    return result

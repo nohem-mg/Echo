@@ -27,7 +27,18 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { 
+  parseAgentkitHeader, 
+  validateAgentkitMessage, 
+  verifyAgentkitSignature, 
+  createAgentBookVerifier 
+} from "@worldcoin/agentkit";
+
 import { getUnlinkRouteHandlers } from "./unlink-gateway.ts";
+
+const reportTrialCounts = new Map<string, number>();
+const agentBook = createAgentBookVerifier();
+
 
 const PORT = Number(process.env.ECHO_GATEWAY_PORT ?? 8080);
 const BASIC_PITCH_URL = process.env.ECHO_BASIC_PITCH_URL ?? "http://127.0.0.1:8001";
@@ -468,6 +479,62 @@ Bun.serve({
 
     // -- Step 4: /api/report --------------------------------------------------
     if (pathname === "/api/report" && req.method === "POST") {
+      // 1. Verify Human Backed Agent credential (createAgentkitHooks equivalent for Bun)
+      const agentkitHeader = req.headers.get("agentkit") || req.headers.get("Agentkit");
+      if (!agentkitHeader) {
+        const domain = "localhost";
+        const uri = "http://localhost:8080/api/report";
+        return Response.json({ 
+          code: "payment_required", 
+          message: "AgentKit header required",
+          extensions: {
+            agentkit: {
+              info: {
+                domain,
+                uri,
+                version: "1",
+                nonce: crypto.randomUUID().replace(/-/g, ""),
+                issuedAt: new Date().toISOString()
+              },
+              supportedChains: [{ chainId: "eip155:480", type: "eip191", signatureScheme: "eip191" }]
+            }
+          }
+        }, { 
+          status: 402,
+          headers: { "WWW-Authenticate": "x402" }
+        });
+      }
+
+      let nullifier: string;
+      try {
+        const payload = parseAgentkitHeader(agentkitHeader);
+        const resourceUri = new URL(req.url, `http://${req.headers.get("host")}`).toString();
+        const validation = await validateAgentkitMessage(payload, resourceUri);
+        if (!validation.valid) throw new Error(validation.error);
+
+        const verification = await verifyAgentkitSignature(payload, process.env.ECHO_RPC_URL);
+        if (!verification.valid || !verification.address) throw new Error(verification.error);
+
+        const humanId = await agentBook.lookupHuman(verification.address);
+        if (!humanId) throw new Error("Agent is not backed by a verified human");
+        nullifier = humanId;
+      } catch (err: any) {
+        vlog("AgentKit verification failed:", err);
+        const errMsg = err instanceof Error ? err.message : (err?.message || JSON.stringify(err));
+        return json({ code: "unauthorized", message: `AgentKit verification failed: ${errMsg}` }, 401);
+      }
+
+      // 2. Trial mechanic
+      const trialCount = reportTrialCounts.get(nullifier) || 0;
+      if (trialCount >= 3) {
+        vlog(`Trial exhausted for nullifier ${nullifier} (count=${trialCount})`);
+        return json({ code: "payment_required", message: "Trial épuisé — paiement requis" }, 402);
+      }
+      
+      // Increment immediately so even mocked requests consume trials
+      reportTrialCounts.set(nullifier, trialCount + 1);
+      vlog(`Trial count for nullifier ${nullifier} incremented to ${trialCount + 1}`);
+
       const payload = (await req.json()) as {
         audioFile?: string;
         midiSequence?: string | Record<string, unknown>;
@@ -482,14 +549,15 @@ Bun.serve({
         return json(mockReport());
       }
       try {
-        return json(
-          await proxyReport({
-            audioFile: payload.audioFile,
-            midiSequence: payload.midiSequence,
-            registry_matches: payload.registry_matches ?? [],
-            commercial_deltas: payload.commercial_deltas ?? [],
-          }),
-        );
+        const reportResult = await proxyReport({
+          audioFile: payload.audioFile,
+          midiSequence: payload.midiSequence,
+          registry_matches: payload.registry_matches ?? [],
+          commercial_deltas: payload.commercial_deltas ?? [],
+        });
+        
+
+        return json(reportResult);
       } catch (err) {
         return upstreamError(err);
       }

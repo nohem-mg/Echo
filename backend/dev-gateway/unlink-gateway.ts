@@ -36,7 +36,9 @@ const admin = createUnlinkAdmin({
   apiKey: UNLINK_API_KEY,
 });
 
-const unlinkAccount = account.fromMnemonic({ mnemonic: UNLINK_MNEMONIC });
+const unlinkAccount = account.fromMnemonic({ 
+  mnemonic: UNLINK_MNEMONIC || "test test test test test test test test test test test junk" 
+});
 
 /**
  * Echo Protocol service-level Unlink client.

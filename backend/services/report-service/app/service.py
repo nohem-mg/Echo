@@ -1,138 +1,146 @@
-"""Step 4 — rank matches, extract acoustic profile, emit final verdict."""
+import json
+import logging
+import re
+from groq import Groq
+from .config import settings
+from .schemas import ReportResponse, SubmittedTrack, SimilarTrack
 
-from __future__ import annotations
+logger = logging.getLogger(__name__)
 
-from dataclasses import dataclass
-from pathlib import Path
+PROMPT_SYSTEM = """You are an AI music IP agent with the final authority to approve or block an on-chain SEAL.
+Your decision is binding and non-bypassable. You speak directly to the artist in English.
 
-from echo_common.schemas.midi import MidiSequence
+STRICT RULES:
+- NO titles, NO bold, NO markdown, NO bullet points, NO lists
+- Maximum 2 short paragraphs, 2-3 sentences each
+- Start directly with the content
+- Only mention what is in the data. Never invent similarities, scores, or links.
+- Only include a SoundCloud link if explicitly provided in the data.
+- Be specific: name the track, cite the actual scores.
 
-from .acoustic import AcousticProfile, extract_profile
-from .config import Settings
-from .schemas import (
-    CommercialDeltaIn,
-    RegistryMatchIn,
-    ReportResponse,
-    SimilarTrack,
-    SubmittedTrack,
-)
-
-
-@dataclass(frozen=True)
-class _Candidate:
-    title: str
-    source: str
-    score: float
-    melody: float
-    rhythm: float
-    structure: float
-    key_label: str
-    bpm: float
+LEGAL FRAMEWORK — analytical method:
+- Melodic patterns (hook_intervals) are the most protectable element. Each matched interval represents a specific sequence of notes that can constitute infringement.
+- Rhythm alone is rarely protectable unless combined with a distinctive melodic pattern.
+- Global overlap measures how much of the submitted track overlaps with the existing one — high overlap on a short track (few notes) is more significant than on a long track.
+- Hook percentage measures how much of the hook specifically matches — a hook is the most distinctive and therefore most protectable part of a composition.
+- Common chord progressions, feel, and groove are NOT protectable regardless of score.
+- Assess protectability by asking: is the similarity in a specific, original melodic sequence? Or is it in a generic rhythmic pattern or common progression?"""
 
 
 class ReportService:
-    def __init__(self, settings: Settings) -> None:
-        self._settings = settings
+    def __init__(self):
+        self.client = Groq(api_key=settings.groq_api_key)
 
-    def build_report(
+    def generate(
         self,
-        audio_path: Path,
-        *,
-        midi_sequence: MidiSequence,
-        registry_matches: list[RegistryMatchIn],
-        commercial_deltas: list[CommercialDeltaIn],
-        request_id: str,
+        submitted_track: dict,
+        registry_matches: list,
+        commercial_deltas: list,
     ) -> ReportResponse:
-        _ = midi_sequence  # melodic context for future enrichment (Step 3 metadata)
-        profile = extract_profile(
-            audio_path,
-            max_duration_s=self._settings.max_analysis_seconds,
-        )
-        submitted = SubmittedTrack(
-            key=profile.key,
-            mode=profile.mode,
-            BPM=profile.bpm,
-            fingerprint=profile.fingerprint,
-        )
-        candidates = self._collect_candidates(
-            profile, registry_matches, commercial_deltas
-        )
-        candidates.sort(key=lambda c: c.score, reverse=True)
-        similar_tracks = [
-            SimilarTrack(
-                rank=i + 1,
-                title=c.title,
-                source=c.source,  # type: ignore[arg-type]
-                score=round(c.score, 1),
-                melody=round(c.melody, 1),
-                rhythm=round(c.rhythm, 1),
-                structure=round(c.structure, 1),
-                key=c.key_label,
-                BPM=c.bpm,
-            )
-            for i, c in enumerate(candidates[:10])
-        ]
-        top_score = similar_tracks[0].score if similar_tracks else 0.0
-        verdict = (
-            "SIMILAR"
-            if top_score >= self._settings.similar_threshold
-            else "CLEAN"
-        )
-        ai_summary = self._summary(verdict, top_score, similar_tracks)
+        similar_tracks = self._build_similar_tracks(registry_matches, commercial_deltas)
+        best_score = max((t.score for t in similar_tracks), default=0)
+        verdict = "SIMILAR" if best_score >= 75 else "CLEAN"
+
+        ai_summary = self._call_groq(submitted_track, similar_tracks, verdict)
+        can_seal = self._compute_can_seal(similar_tracks, verdict)
+
         return ReportResponse(
             verdict=verdict,
-            submitted_track=submitted,
+            submitted_track=SubmittedTrack(**submitted_track) if submitted_track else SubmittedTrack(),
             similar_tracks=similar_tracks,
             ai_summary=ai_summary,
-            request_id=request_id,
+            can_seal=can_seal,
         )
 
-    def _collect_candidates(
-        self,
-        profile: AcousticProfile,
-        registry_matches: list[RegistryMatchIn],
-        commercial_deltas: list[CommercialDeltaIn],
-    ) -> list[_Candidate]:
-        key_label = f"{profile.key} {profile.mode}"
-        out: list[_Candidate] = []
-        for match in registry_matches:
-            score = match.similarity_score
-            out.append(
-                _Candidate(
-                    title=f"{match.track_id[:10]}… [SEALED]",
-                    source="Registre privé",
-                    score=score,
-                    melody=score,
-                    rhythm=round(score * 0.92, 1),
-                    structure=round(score * 0.88, 1),
-                    key_label=key_label,
-                    bpm=profile.bpm,
-                )
-            )
-        for delta in commercial_deltas:
-            score = (delta.melodic + delta.rhythmic + delta.structural) / 3.0
-            out.append(
-                _Candidate(
-                    title=f"ISRC {delta.ISRC}",
-                    source="ACRCloud",
-                    score=score,
-                    melody=delta.melodic,
-                    rhythm=delta.rhythmic,
-                    structure=delta.structural,
-                    key_label=key_label,
-                    bpm=profile.bpm,
-                )
-            )
-        return out
+    def _compute_can_seal(self, similar_tracks: list[SimilarTrack], verdict: str) -> bool:
+        """Deterministic evaluation of similarity rules to approve or block the SEAL."""
+        if verdict == "SIMILAR":
+            return False
+            
+        for t in similar_tracks:
+            # High similarity in both melody and rhythm
+            if t.melody > 70 and t.rhythm > 70:
+                return False
+                
+            # Overall similarity exceeds the maximum allowed threshold
+            if t.score > 75:
+                return False
+                
+        return True
 
-    @staticmethod
-    def _summary(
-        verdict: str, top_score: float, similar_tracks: list[SimilarTrack]
-    ) -> str:
-        if verdict == "CLEAN":
-            return "Aucune similarité significative (<75%). Track éligible au SEAL."
-        title = similar_tracks[0].title if similar_tracks else "une track connue"
-        return (
-            f"Similarité significative ({top_score:.0f}%) avec {title}. "
-            "Rapport affiché à l'artiste, aucune écriture on-chain."
+    def _build_similar_tracks(self, registry_matches: list, commercial_deltas: list) -> list[SimilarTrack]:
+        tracks = []
+        rank = 1
+
+        for m in registry_matches:
+            tracks.append(SimilarTrack(
+                rank=rank,
+                title=m.get("title", f"Track #{m.get('track_id', '?')}"),
+                source="Private Registry",
+                score=m.get("similarity_score", 0),
+                melody=m.get("melodic", 0),
+                rhythm=m.get("rhythmic", 0),
+                structure=m.get("structural", 0),
+                key=m.get("key", ""),
+                BPM=m.get("BPM", 0),
+                soundcloud_url=m.get("soundcloud_url", ""),
+                hook_intervals=m.get("hook_intervals", 0),
+                global_overlap=m.get("global_overlap", 0),
+                hook=m.get("hook", 0),
+            ))
+            rank += 1
+
+        for d in commercial_deltas:
+            score = (d.get("melodic", 0) + d.get("rhythmic", 0) + d.get("structural", 0)) / 3
+            tracks.append(SimilarTrack(
+                rank=rank,
+                title=d.get("title", d.get("ISRC", "?")),
+                source="ACRCloud",
+                score=round(score, 1),
+                melody=d.get("melodic", 0),
+                rhythm=d.get("rhythmic", 0),
+                structure=d.get("structural", 0),
+                key=d.get("key", ""),
+                BPM=d.get("BPM", 0),
+                soundcloud_url=d.get("soundcloud_url", ""),
+            ))
+            rank += 1
+
+        return sorted(tracks, key=lambda t: t.score, reverse=True)
+
+    def _call_groq(self, submitted_track: dict, similar_tracks: list[SimilarTrack], verdict: str) -> str:
+        if not similar_tracks:
+            return "No significant similarity detected. Your track is original and eligible for SEAL."
+
+        tracks_str = "\n".join([
+            f"- {t.title} ({t.source}): overall {t.score}%, "
+            f"melody {t.melody}%, rhythm {t.rhythm}%, structure {t.structure}%"
+            + (f", hook {t.hook}%, hook_intervals matched: {t.hook_intervals}, global_overlap: {t.global_overlap}%" if t.source == "Private Registry" else "")
+            + (f" — listen: {t.soundcloud_url}" if t.soundcloud_url else "")
+            for t in similar_tracks[:3]
+        ])
+
+        user_prompt = f"""Track submitted: {submitted_track.get('key', '?')} {submitted_track.get('mode', '')}, {submitted_track.get('BPM', '?')} BPM — {submitted_track.get('n_notes', '?')} notes, {submitted_track.get('duration_s', '?')}s
+Algorithm verdict: {verdict}
+
+{f"Similarities detected:{chr(10)}{tracks_str}" if similar_tracks else "No similarity detected by the algorithm."}
+
+Analyze the similarities against the legal framework. Pay special attention to hook_intervals — each matched interval is a melodic pattern, the most protectable element in copyright law. Explain what matches, whether it is protectable, and why the SEAL is approved or blocked."""
+
+        logger.info("Calling Groq", extra={"model": settings.groq_model, "similar_count": len(similar_tracks)})
+
+        response = self.client.chat.completions.create(
+            model=settings.groq_model,
+            max_tokens=settings.groq_max_tokens,
+            messages=[
+                {"role": "system", "content": PROMPT_SYSTEM},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
         )
+
+        text = response.choices[0].message.content.strip()
+        # Strip markdown formatting to ensure clean text output
+        text = re.sub(r'\*\*[^*]+\*\*\n?', '', text).strip()
+        
+        return text
