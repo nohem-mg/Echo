@@ -9,6 +9,7 @@ export const echoConfig = {
   registryChainId: Number(process.env.NEXT_PUBLIC_REGISTRY_CHAIN_ID ?? "11155111"),
   registryAddress: process.env.NEXT_PUBLIC_REGISTRY_ADDRESS ?? "",
   registryExplorer: process.env.NEXT_PUBLIC_REGISTRY_EXPLORER ?? "https://sepolia.etherscan.io",
+  escrowAddress: process.env.NEXT_PUBLIC_ESCROW_ADDRESS ?? "",
 } as const;
 
 export function isWorldConfigured() {
