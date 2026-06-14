@@ -239,15 +239,26 @@ async function createAudioFingerprint(file: File) {
   return `sha256:${hash}`;
 }
 
+function fmtScore(score: number): string {
+  return score % 1 === 0 ? `${score}` : score.toFixed(1);
+}
+
 function normalizeReportMatches(report?: EchoReport): ReportTableMatch[] {
   if (!report?.similar_tracks?.length) {
     return [];
   }
 
-  return report.similar_tracks.map((match) => ({
-    ...match,
-    keyLabel: typeof match.BPM === "number" ? `${match.key} / ${match.BPM}` : match.key,
-  }));
+  return report.similar_tracks.map((match) => {
+    let keyLabel: string;
+    if (typeof match.BPM === "number" && match.BPM > 0) {
+      keyLabel = `${match.key} / ${match.BPM}`;
+    } else if (match.hook_intervals && match.hook_intervals > 0) {
+      keyLabel = `${match.hook_intervals} intv.`;
+    } else {
+      keyLabel = match.key;
+    }
+    return { ...match, keyLabel };
+  });
 }
 
 function getBestMatch(report?: EchoReport) {
@@ -331,14 +342,11 @@ function buildFallbackBlockedReport(flow: EchoFlow | null, steps: EchoPipelineSt
         title: matchLabel,
         source: isPlagiarism ? "ACRCloud" : "Registre privé",
         score,
-        melody: score,
-        rhythm: score,
-        structure: score,
-        key: isPlagiarism ? isrcKey : blockedStep.reason?.slice(0, 12) ?? "—",
+        key: isPlagiarism ? isrcKey : "MIDI",
       },
     ],
     ai_summary: isPlagiarism
-      ? `Plagiat détecté (${score}%) — correspondance avec « ${matchLabel} ».`
+      ? `Plagiat détecté (${fmtScore(score)}%) — correspondance avec « ${matchLabel} ».`
       : blockedStep.reason ?? flow.error ?? "Analyse interrompue — aucun seal on-chain.",
   };
 }
@@ -451,6 +459,8 @@ export default function Home() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const sealAttemptedRef = useRef<string | null>(null);
   const sealInFlightRef = useRef<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewAudioUrlRef = useRef<string | null>(null);
   const { writeContractAsync: writeRegistryContract, isPending: isWritingRegistry } = useWriteContract();
   const { address, isConnected } = useAccount();
   const { entries: historyEntries, addOrUpdate: addOrUpdateHistory } = useFlowHistory(address);
@@ -853,6 +863,19 @@ export default function Home() {
 
         return persistRegistryRegistration(currentFlow.id, registryTrackId, commitmentHash, registryRef);
       } catch (error) {
+        // If the contract reverted with TrackAlreadyRegistered, the track is already
+        // owned by a different address — surface a clear message instead of retrying.
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (errorMessage.includes("TrackAlreadyRegistered") || errorMessage.includes("0x")) {
+          const isAlreadyRegisteredRevert =
+            errorMessage.includes("TrackAlreadyRegistered") ||
+            // Foundry/viem encodes custom errors as the 4-byte selector in the message.
+            errorMessage.includes("already registered");
+          if (isAlreadyRegisteredRevert) {
+            throw new Error("This track is already registered by another artist on-chain.");
+          }
+        }
+
         const retryTrackId = await findRegistryTrackIdByCommitment(
           publicClient,
           registryAddress,
@@ -1097,12 +1120,85 @@ export default function Home() {
     if (flow && address) addOrUpdateHistory(flow);
   }, [flow, address, addOrUpdateHistory]);
 
+  useEffect(() => {
+    const audio = previewAudioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    const syncPlaying = () => setIsPlaying(!audio.paused && !audio.ended);
+    const handleEnded = () => setIsPlaying(false);
+
+    audio.addEventListener("play", syncPlaying);
+    audio.addEventListener("pause", syncPlaying);
+    audio.addEventListener("ended", handleEnded);
+
+    return () => {
+      audio.removeEventListener("play", syncPlaying);
+      audio.removeEventListener("pause", syncPlaying);
+      audio.removeEventListener("ended", handleEnded);
+    };
+  }, []);
+
+  useEffect(() => {
+    const audio = previewAudioRef.current;
+
+    if (previewAudioUrlRef.current) {
+      URL.revokeObjectURL(previewAudioUrlRef.current);
+      previewAudioUrlRef.current = null;
+    }
+
+    setIsPlaying(false);
+    audio?.pause();
+
+    if (!audioFile) {
+      if (audio) {
+        audio.removeAttribute("src");
+        audio.load();
+      }
+      return;
+    }
+
+    const url = URL.createObjectURL(audioFile);
+    previewAudioUrlRef.current = url;
+    if (audio) {
+      audio.src = url;
+      audio.load();
+    }
+
+    return () => {
+      if (previewAudioUrlRef.current) {
+        URL.revokeObjectURL(previewAudioUrlRef.current);
+        previewAudioUrlRef.current = null;
+      }
+    };
+  }, [audioFile]);
+
+  async function handleTogglePreview() {
+    const audio = previewAudioRef.current;
+    if (!audio || !audioFile) {
+      return;
+    }
+
+    if (audio.paused) {
+      try {
+        await audio.play();
+      } catch {
+        setIsPlaying(false);
+      }
+      return;
+    }
+
+    audio.pause();
+  }
+
   async function restoreFlow(flowId: string) {
     try {
       const res = await fetch(`/api/flows/${flowId}`);
       if (!res.ok) return;
       const data = (await res.json()) as { flow: import("@/lib/types").EchoFlow; pipeline: import("@/lib/types").EchoPipelineStep[] };
       setFlow(data.flow);
+      setAudioFile(null);
       setAudioName(data.flow.trackName);
       setSoundCloudTitle(stripAudioExtension(data.flow.trackName));
       setLivePipelineSteps(data.pipeline ?? []);
@@ -1676,6 +1772,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen overflow-hidden bg-[#050505] text-[#f8f6ee]">
+      <audio ref={previewAudioRef} className="hidden" preload="metadata" />
       <div className="fixed inset-x-0 top-0 z-40 border-b border-white/10 bg-[#050505]/75 backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <a className="flex items-center gap-3" href="#top" aria-label="Echo home">
@@ -1693,18 +1790,18 @@ export default function Home() {
       </div>
 
       <section id="top" className="relative px-4 pb-16 pt-24 sm:px-6 lg:px-8">
-        <div className="noise-layer" aria-hidden="true" />
+        <div className="noise-layer echo-noise-drift" aria-hidden="true" />
         <div className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[1.02fr_0.98fr] lg:items-start">
           <div className="order-2 relative min-h-[640px] overflow-hidden rounded-[8px] border border-white/15 bg-black px-5 py-6 sm:px-8 lg:order-1 lg:px-10">
-            <div className="halftone absolute -left-24 top-16 size-80 opacity-45" aria-hidden="true" />
-            <div className="absolute right-8 top-8 z-10 hidden rotate-6 bg-[#fff7cf] px-6 py-5 text-center text-[#050505] starburst sm:block">
+            <div className="halftone echo-halftone absolute -left-24 top-16 size-80 opacity-45" aria-hidden="true" />
+            <div className="echo-starburst absolute right-8 top-8 z-10 hidden rotate-6 bg-[#fff7cf] px-6 py-5 text-center text-[#050505] starburst sm:block">
               <span className="font-hand text-lg">3 seals free</span>
             </div>
 
             <div className="relative z-10 flex h-full flex-col justify-between gap-10">
               <div>
                 <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-white/70">
-                  <CircleDot className="size-4 text-[#9ef7c9]" aria-hidden="true" />
+                  <CircleDot className="echo-status-pulse size-4 text-[#9ef7c9]" aria-hidden="true" />
                   Human-backed confidential music proof
                 </div>
 
@@ -1719,8 +1816,8 @@ export default function Home() {
               <div className="grid gap-4 sm:grid-cols-[1fr_0.8fr] sm:items-end">
                 <div className="rounded-[8px] border border-white/15 bg-[#080808] p-5">
                   <div className="mb-4 flex items-center justify-between gap-4">
-                    <span className="font-hand text-2xl text-[#fff7cf]">private until reveal</span>
-                    <LockKeyhole className="size-5 text-[#f59abd]" aria-hidden="true" />
+                    <span className="echo-hand-float font-hand text-2xl text-[#fff7cf]">private until reveal</span>
+                    <LockKeyhole className="echo-lock-nudge size-5 text-[#f59abd]" aria-hidden="true" />
                   </div>
                   <p className="max-w-xl text-lg leading-7 text-white/72">
                     A TEE-attested prior-art record for unreleased music, designed for artists who need proof without public exposure.
@@ -1735,7 +1832,7 @@ export default function Home() {
           </div>
 
           <div className="order-1 relative rounded-[8px] border border-white/15 bg-[#0a0a0a] p-4 sm:p-6 lg:order-2 lg:p-8">
-            <div className="absolute -right-4 -top-5 rotate-3 rounded-[8px] border border-[#f59abd] bg-[#050505] px-4 py-2 font-hand text-xl text-[#f59abd]">
+            <div className="echo-badge-tilt absolute -right-4 -top-5 rotate-3 rounded-[8px] border border-[#f59abd] bg-[#050505] px-4 py-2 font-hand text-xl text-[#f59abd]">
               artist mode
             </div>
 
@@ -1745,8 +1842,10 @@ export default function Home() {
                 <h2 className="mt-1 font-display text-3xl font-black">Register a track</h2>
               </div>
               <button
-                className="inline-flex h-12 items-center gap-2 rounded-full border border-white/15 px-5 font-bold transition hover:border-[#f59abd] hover:text-[#f59abd]"
-                onClick={() => setIsPlaying((value) => !value)}
+                className={`inline-flex h-12 items-center gap-2 rounded-full border border-white/15 px-5 font-bold transition ${audioFile ? "hover:border-[#f59abd] hover:text-[#f59abd]" : "cursor-not-allowed opacity-40"}`}
+                disabled={!audioFile}
+                onClick={() => void handleTogglePreview()}
+                title={audioFile ? "Play uploaded track" : "Upload a track to preview"}
                 type="button"
               >
                 {isPlaying ? <Pause className="size-4" aria-hidden="true" /> : <Play className="size-4" aria-hidden="true" />}
@@ -1949,7 +2048,11 @@ export default function Home() {
             {[...sponsors, ...sponsors].map((item, index) => (
               <span className="flex items-center gap-8" key={`${item}-${index}`}>
                 {item}
-                <Sparkles className="size-4 text-[#fff7cf]" aria-hidden="true" />
+                <Sparkles
+                  className="echo-sparkle-twinkle size-4 text-[#fff7cf]"
+                  style={{ animationDelay: `${(index % 5) * 0.45}s` }}
+                  aria-hidden="true"
+                />
               </span>
             ))}
           </div>
@@ -1959,7 +2062,9 @@ export default function Home() {
       <section id="pipeline" className="px-4 py-12 sm:px-6 lg:px-8 lg:py-16">
         <div className="mx-auto flex flex-col gap-6 lg:gap-8 w-full max-w-7xl">
           <div>
-            <p className="font-hand text-2xl sm:text-3xl text-[#9ef7c9]">echo, but sealed</p>
+            <p className="echo-hand-float font-hand text-2xl sm:text-3xl text-[#9ef7c9]" style={{ animationDelay: "0.6s" }}>
+              echo, but sealed
+            </p>
             <h2 className="mt-2 sm:mt-4 max-w-3xl font-display text-[clamp(2.5rem,5.5vw,4.2rem)] font-black leading-[0.9]">
               One private run. One public timestamp.
             </h2>
@@ -1995,7 +2100,7 @@ export default function Home() {
                   )}
                   <div className="mt-4 sm:mt-8 lg:mt-3 xl:mt-5 h-2 rounded-full bg-white/10">
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${liveState === "blocked" ? "bg-[#ff7777]" : "bg-[#9ef7c9]"}`}
+                      className={`h-full rounded-full transition-all duration-500 ${liveState === "blocked" ? "bg-[#ff7777]" : liveState === "active" ? "echo-progress-shimmer" : "bg-[#9ef7c9]"}`}
                       style={{ width: progressWidth }}
                     />
                   </div>
@@ -2010,14 +2115,16 @@ export default function Home() {
         <div className="mx-auto w-full max-w-7xl">
           <div className="mb-8 flex flex-wrap items-end justify-between gap-6">
             <div>
-              <p className="font-hand text-3xl text-[#fff7cf]">verdict board</p>
+              <p className="echo-hand-float font-hand text-3xl text-[#fff7cf]" style={{ animationDelay: "0.3s" }}>
+                verdict board
+              </p>
               <h2 className={`mt-3 font-display text-[clamp(2.8rem,6vw,6rem)] font-black leading-[0.9] ${verdictInfo.colorClass}`}>
                 {verdictInfo.title}
               </h2>
               <p className="mt-2 text-white/60 text-lg">{verdictInfo.subtitle}</p>
             </div>
             <div className={`rounded-full border px-5 py-3 font-black ${verdictInfo.badgeClass}`}>
-              {verdictInfo.badgeText} {verdictInfo.bestMatch > 0 ? `· Best match ${verdictInfo.bestMatch}%` : ""}
+              {verdictInfo.badgeText} {verdictInfo.bestMatch > 0 ? `· Best match ${fmtScore(verdictInfo.bestMatch)}%` : ""}
             </div>
           </div>
 
@@ -2028,20 +2135,32 @@ export default function Home() {
                   <div className="min-w-14 border-b border-white/10 p-4">#</div>
                   <div className="min-w-64 border-b border-white/10 p-4">Track</div>
                   <div className="min-w-24 border-b border-white/10 p-4">Global</div>
-                  <div className="min-w-24 border-b border-white/10 p-4">Melody</div>
+                  <div className="min-w-24 border-b border-white/10 p-4 flex items-center gap-1">
+                    Melody
+                    {reportMatches[0]?.global_overlap !== undefined && (
+                      <span className="text-[10px] text-white/30 font-normal">(n-gram)</span>
+                    )}
+                  </div>
                   <div className="min-w-24 border-b border-white/10 p-4">Rhythm</div>
-                  <div className="min-w-24 border-b border-white/10 p-4">Structure</div>
-                  <div className="min-w-28 border-b border-white/10 p-4">Key / BPM</div>
+                  <div className="min-w-24 border-b border-white/10 p-4 flex items-center gap-1">
+                    Hook
+                    {reportMatches[0]?.hook !== undefined && (
+                      <span className="text-[10px] text-white/30 font-normal">(S-W)</span>
+                    )}
+                  </div>
+                  <div className="min-w-28 border-b border-white/10 p-4">
+                    {reportMatches[0]?.hook_intervals !== undefined ? "Phrase len." : "Key / BPM"}
+                  </div>
                   <div className="min-w-32 border-b border-white/10 p-4">Source</div>
                 </div>
                 {reportMatches.map((match) => (
                   <div className="contents" key={match.rank}>
                     <div className="min-w-14 border-b border-white/10 p-4 text-white/55">{match.rank}</div>
                     <div className="min-w-64 border-b border-white/10 p-4 font-bold">{match.title}</div>
-                    <div className={`min-w-24 border-b border-white/10 p-4 font-black ${scoreTone(match.score)}`}>{match.score}%</div>
-                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.melody}%</div>
-                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.rhythm}%</div>
-                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.structure}%</div>
+                    <div className={`min-w-24 border-b border-white/10 p-4 font-black ${scoreTone(match.score)}`}>{fmtScore(match.score)}%</div>
+                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.melody !== undefined ? `${fmtScore(match.melody)}%` : <span className="text-white/25">—</span>}</div>
+                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.rhythm !== undefined ? `${fmtScore(match.rhythm)}%` : <span className="text-white/25">—</span>}</div>
+                    <div className="min-w-24 border-b border-white/10 p-4 text-white/65">{match.structure !== undefined ? `${fmtScore(match.structure)}%` : <span className="text-white/25">—</span>}</div>
                     <div className="min-w-28 border-b border-white/10 p-4 text-white/65">{match.keyLabel}</div>
                     <div className="min-w-32 border-b border-white/10 p-4 text-white/65">{match.source}</div>
                   </div>
@@ -2129,12 +2248,25 @@ export default function Home() {
                       ?? "Similarité élevée détectée."}
                   </p>
                   {activeReport?.similar_tracks?.[0]?.score ? (
-                    <p className="mt-2 font-mono text-sm text-white/75">
-                      Score {activeReport.similar_tracks[0].score}%
-                      {activeReport.similar_tracks[0].key.startsWith("ISRC")
-                        ? ` · ${activeReport.similar_tracks[0].key}`
-                        : null}
-                    </p>
+                    <div className="mt-2 font-mono text-sm text-white/75 space-y-1">
+                      <p>
+                        Score <span className="font-black text-white">{fmtScore(activeReport.similar_tracks[0].score)}%</span>
+                        {activeReport.similar_tracks[0].key.startsWith("ISRC")
+                          ? ` · ${activeReport.similar_tracks[0].key}`
+                          : null}
+                      </p>
+                      {activeReport.similar_tracks[0].global_overlap !== undefined && (
+                        <p className="text-xs text-white/55">
+                          Mélodie globale: {fmtScore(activeReport.similar_tracks[0].global_overlap)}%
+                          {activeReport.similar_tracks[0].hook !== undefined && (
+                            <> · Phrase distinctive: {fmtScore(activeReport.similar_tracks[0].hook)}%</>
+                          )}
+                          {activeReport.similar_tracks[0].hook_intervals ? (
+                            <> · {activeReport.similar_tracks[0].hook_intervals} intervalles</>
+                          ) : null}
+                        </p>
+                      )}
+                    </div>
                   ) : null}
                   {activeReport?.ai_summary ? (
                     <p className="mt-3 font-mono text-xs text-white/60">{activeReport.ai_summary}</p>
@@ -2147,10 +2279,12 @@ export default function Home() {
             </div>
           ) : hasRegistrySeal ? (
             <div className="relative overflow-hidden rounded-[8px] border border-white/15 bg-[#f8f6ee] p-6 text-[#050505] sm:p-8">
-              <div className="absolute right-8 top-8 rounded-full bg-[#050505] px-4 py-2 text-sm font-black text-[#f8f6ee]">
+              <div className="echo-seal-pulse absolute right-8 top-8 rounded-full bg-[#050505] px-4 py-2 text-sm font-black text-[#f8f6ee]">
                 SEALED
               </div>
-              <p className="font-hand text-3xl text-[#f59abd]">sealed certificate</p>
+              <p className="echo-hand-float font-hand text-3xl text-[#f59abd]" style={{ animationDelay: "0.8s" }}>
+                sealed certificate
+              </p>
               <h2 className="mt-4 max-w-3xl font-display text-[clamp(3rem,7vw,7rem)] font-black leading-[0.86]">
                 Proof that keeps the music yours.
               </h2>
@@ -2202,10 +2336,12 @@ export default function Home() {
             </div>
           ) : (
             <div className="relative overflow-hidden rounded-[8px] border border-white/15 bg-[#080808] p-6 text-white sm:p-8">
-              <div className="rounded-full border border-white/15 bg-white/[0.03] px-4 py-2 text-sm font-black text-white/55 w-fit">
+              <div className="echo-pending-pulse rounded-full border border-white/15 bg-white/[0.03] px-4 py-2 text-sm font-black text-white/55 w-fit">
                 CERTIFICATE PENDING
               </div>
-              <p className="mt-8 font-hand text-3xl text-[#f59abd]">no seal yet</p>
+              <p className="echo-hand-float mt-8 font-hand text-3xl text-[#f59abd]" style={{ animationDelay: "0.5s" }}>
+                no seal yet
+              </p>
               <h2 className="mt-4 max-w-3xl font-display text-[clamp(3rem,7vw,7rem)] font-black leading-[0.86]">
                 Certificate appears only after a clean Registry transaction.
               </h2>
@@ -2230,7 +2366,7 @@ export default function Home() {
                 <p className="text-sm uppercase text-white/45">Reveal queue</p>
                 <h3 className="mt-1 font-display text-3xl font-black">Artist controls</h3>
               </div>
-              <Disc3 className="size-10 text-[#8fd5ff]" aria-hidden="true" />
+              <Disc3 className="echo-disc-idle size-10 text-[#8fd5ff]" aria-hidden="true" />
             </div>
             <div className="space-y-3">
               {[
@@ -2521,18 +2657,25 @@ function CertificateMetric({ label, value, copyValue }: { label: string; value: 
 function VinylVisual({ isPlaying }: { isPlaying: boolean }) {
   return (
     <div className="absolute inset-0 grid place-items-center">
-      <div className={`vinyl relative size-full rounded-full border border-white/20 bg-[#111] ${isPlaying ? "animate-spin-slow" : ""}`}>
-        <div className="absolute inset-[8%] rounded-full border border-white/10" />
-        <div className="absolute inset-[18%] rounded-full border border-white/10" />
-        <div className="absolute inset-[30%] rounded-full border border-white/10" />
-        <div className="absolute left-1/2 top-1/2 grid size-24 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[#f59abd] text-[#050505]">
+      <div
+        className={`vinyl relative size-full rounded-full border border-white/20 bg-[#111] ${isPlaying ? "vinyl-spin-fast" : "vinyl-spin-idle"}`}
+      >
+        <div className="vinyl-shimmer vinyl-shimmer-spin absolute inset-0 rounded-full" aria-hidden="true" />
+        <div className="echo-groove-pulse absolute inset-[8%] rounded-full border border-white/10" style={{ animationDelay: "0s" }} />
+        <div className="echo-groove-pulse absolute inset-[18%] rounded-full border border-white/10" style={{ animationDelay: "0.8s" }} />
+        <div className="echo-groove-pulse absolute inset-[30%] rounded-full border border-white/10" style={{ animationDelay: "1.6s" }} />
+        <div className="vinyl-label-pulse absolute left-1/2 top-1/2 grid size-24 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[#f59abd] text-[#050505]">
           <FileAudio className="size-9" aria-hidden="true" />
         </div>
       </div>
       <svg className="pointer-events-none absolute -right-6 top-8 h-44 w-40 text-[#fff7cf]" viewBox="0 0 180 190" fill="none" aria-hidden="true">
-        <path d="M144 18C127 53 120 75 124 102C128 130 118 151 88 168" stroke="currentColor" strokeWidth="12" strokeLinecap="round" />
-        <path d="M87 168C59 184 28 171 23 146C19 126 33 111 55 111C79 111 94 132 88 168Z" fill="currentColor" />
-        <path d="M27 46L51 58L27 70L15 94L3 70L-21 58L3 46L15 22L27 46Z" fill="currentColor" transform="translate(38 10)" />
+        <g className="vinyl-note">
+          <path d="M144 18C127 53 120 75 124 102C128 130 118 151 88 168" stroke="currentColor" strokeWidth="12" strokeLinecap="round" />
+          <path d="M87 168C59 184 28 171 23 146C19 126 33 111 55 111C79 111 94 132 88 168Z" fill="currentColor" />
+        </g>
+        <g className="vinyl-sparkle">
+          <path d="M27 46L51 58L27 70L15 94L3 70L-21 58L3 46L15 22L27 46Z" fill="currentColor" transform="translate(38 10)" />
+        </g>
       </svg>
     </div>
   );
