@@ -1723,7 +1723,7 @@ export default function Home() {
                     <LockKeyhole className="size-5 text-[#f59abd]" aria-hidden="true" />
                   </div>
                   <p className="max-w-xl text-lg leading-7 text-white/72">
-                    A TEE-attested prior-art record for unreleased music, designed for artists who need proof without public exposure.
+                    Upload your track, run a confidential plagiarism check, and seal a prior-art proof on-chain — reveal it publicly whenever you're ready.
                   </p>
                 </div>
 
