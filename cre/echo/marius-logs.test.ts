@@ -13,8 +13,7 @@ const INPUT: PipelineInput = {
   audioRef: "file://backend/fixtures/audio/demo.mp3",
   commitmentHash: "0xabc",
   registryRef: "0xref",
-  worldNullifier: "0xnull",
-  trackId: "0xtrack",
+  owner: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 };
 
 const MIDI = JSON.stringify({ n_notes: 12, duration_s: 4.2, notes: [{ pitch: 60 }] });

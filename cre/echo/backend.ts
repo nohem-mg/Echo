@@ -38,6 +38,7 @@ export type Deferred<T> = { result: () => T };
  * @param path      Endpoint path (e.g. "/api/convert")
  * @param body      Serializable JSON body
  * @param timeoutMs Per-request timeout (fail-fast)
+ * @param headers   Optional extra HTTP headers (e.g. AgentKit auth)
  * @returns         Handle whose `.result()` returns the parsed response
  */
 export function backendPost<TConfig, TResponse>(
@@ -46,6 +47,7 @@ export function backendPost<TConfig, TResponse>(
   path: string,
   body: unknown,
   timeoutMs = 30_000,
+  headers?: Record<string, string>,
 ): Deferred<TResponse> {
   const url = `${baseUrl}${path}`;
   const payload = JSON.stringify(body);
@@ -60,6 +62,7 @@ export function backendPost<TConfig, TResponse>(
         body: new TextEncoder().encode(payload),
         // google.protobuf.Duration as JSON = suffix string "s".
         timeout: `${Math.floor(timeoutMs / 1000)}s`,
+        ...(headers ? { headers } : {}),
       })
       .result();
 

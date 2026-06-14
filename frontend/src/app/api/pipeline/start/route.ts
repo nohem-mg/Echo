@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import { FlowStoreError, getFlow, getTrackForFlow, initializePipeline } from "@/lib/flow-store";
-import { buildFlowCommitmentHash, buildFlowRegistryRef, buildProvisionalCreTrackId } from "@/lib/registry-handoff";
+import {
+  buildFlowCommitmentHash,
+  buildFlowRegistryRef,
+  deriveOwnerKey,
+} from "@/lib/registry-handoff";
 import type { EchoFlow, EchoTrack } from "@/lib/types";
 
 type StartPipelineRequest = {
   flowId?: string;
   trackId?: string;
+  owner?: `0x${string}`;
+  agentkitHeader?: string;
 };
 
 type CreTriggerPayload = {
@@ -14,8 +20,10 @@ type CreTriggerPayload = {
     audioRef: string;
     commitmentHash: `0x${string}`;
     registryRef: `0x${string}`;
-    worldNullifier: string;
-    trackId: `0x${string}`;
+    /** Artist's ephemeral owner-key address (never their real wallet). */
+    owner: `0x${string}`;
+    /** Signed AgentKit header from the frontend wallet; forwarded to /api/report. */
+    agentkitHeader?: string;
   };
 };
 
@@ -27,7 +35,6 @@ type CreTriggerResult =
   | {
       status: "started";
       url: string;
-      trackIdSource: "registry" | "provisional_upload_id";
       commitmentHashSource: "flow" | "provisional_fingerprint";
       registryRefSource: "flow" | "provisional_upload_id";
     }
@@ -61,10 +68,14 @@ export async function POST(request: Request): Promise<Response> {
       return NextResponse.json({ error: "trackId does not match this flow" }, { status: 409 });
     }
 
-    const pipeline = await initializePipeline({ flowId: flow.id, trackId: track.id });
+    const pipeline = await initializePipeline({
+      flowId: flow.id,
+      trackId: track.id,
+      ownerAddress: body.owner,
+    });
     const updatedFlow = (await getFlow(flow.id)) ?? flow;
     const audioRef = track.storageUrl ?? track.storagePath ?? track.id;
-    const { payload: crePayload, sources: creInputSources } = buildCreTriggerPayload(updatedFlow, track, audioRef);
+    const { payload: crePayload, sources: creInputSources } = buildCreTriggerPayload(updatedFlow, track, audioRef, body.owner, body.agentkitHeader);
     const creTrigger = await triggerCrePipeline(crePayload, creInputSources);
 
     return NextResponse.json({
@@ -99,11 +110,14 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-function buildCreTriggerPayload(flow: EchoFlow, track: EchoTrack, audioRef: string) {
-  const commitmentHash = buildFlowCommitmentHash(flow.id, flow.trackFingerprint);
-  const registryRef = buildFlowRegistryRef(track.id);
-  const registryTrackId = buildProvisionalCreTrackId(track.id);
-  const trackIdSource = "provisional_upload_id";
+function buildCreTriggerPayload(flow: EchoFlow, track: EchoTrack, audioRef: string, clientOwner?: `0x${string}`, agentkitHeader?: string) {
+  const commitmentHash = flow.commitmentHash ?? buildFlowCommitmentHash(flow.id, flow.trackFingerprint);
+  const registryRef = flow.registryRef ?? buildFlowRegistryRef(track.id);
+
+  // Derive the ephemeral owner-key address. In production the browser derives
+  // this by signing a fixed message with the real wallet; server-side we use
+  // a deterministic SHA-256 derivation so the pipeline can always proceed.
+  const owner = clientOwner ?? flow.ownerAddress ?? deriveOwnerKey(flow.walletAddress, flow.nullifierHash);
 
   return {
     payload: {
@@ -112,15 +126,14 @@ function buildCreTriggerPayload(flow: EchoFlow, track: EchoTrack, audioRef: stri
         audioRef,
         commitmentHash,
         registryRef,
-        worldNullifier: flow.nullifierHash,
-        trackId: registryTrackId,
+        owner,
+        ...(agentkitHeader ? { agentkitHeader } : {}),
       },
     } satisfies CreTriggerPayload,
     sources: {
-      trackIdSource,
-      commitmentHashSource: "provisional_fingerprint",
-      registryRefSource: "provisional_upload_id",
-    } as const,
+      commitmentHashSource: flow.commitmentHash ? ("flow" as const) : ("provisional_fingerprint" as const),
+      registryRefSource: flow.registryRef ? ("flow" as const) : ("provisional_upload_id" as const),
+    },
   };
 }
 
@@ -163,4 +176,3 @@ async function triggerCrePipeline(
     };
   }
 }
-

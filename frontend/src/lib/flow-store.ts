@@ -46,6 +46,7 @@ type SaveTrackInput = {
 type InitializePipelineInput = {
   flowId: string;
   trackId: string;
+  ownerAddress?: string;
 };
 
 type UpdatePipelineStepInput = {
@@ -111,15 +112,9 @@ const PIPELINE_STEP_TEMPLATES = [
     phase: "parallel",
   },
   {
-    stepKey: "03",
-    label: "Commercial deltas",
-    detail: "Ready for ISRC preview comparison",
-    phase: "sequential",
-  },
-  {
     stepKey: "04",
     label: "Final report",
-    detail: "Ready for TEE-attested verdict",
+    detail: "Ready for CRE pipeline summary",
     phase: "sequential",
   },
 ] as const;
@@ -787,10 +782,11 @@ export async function initializePipeline(input: InitializePipelineInput) {
             WHEN status IN ('pipeline_completed', 'pipeline_blocked', 'error') THEN status
             ELSE 'pipeline_started'
           END,
+          owner_address = COALESCE($2, owner_address),
           updated_at = now()
         WHERE id = $1
         `,
-        [input.flowId],
+        [input.flowId, input.ownerAddress ?? null],
       );
 
       const result = await client.query("SELECT * FROM echo_pipeline_steps WHERE flow_id = $1 ORDER BY position ASC", [input.flowId]);
@@ -824,6 +820,7 @@ export async function initializePipeline(input: InitializePipelineInput) {
     return {
       ...storedFlow,
       status: ["pipeline_completed", "pipeline_blocked", "error"].includes(storedFlow.status) ? storedFlow.status : "pipeline_started",
+      ownerAddress: input.ownerAddress ? (input.ownerAddress as `0x${string}`) : storedFlow.ownerAddress,
       updatedAt: now,
     };
   });
@@ -1068,6 +1065,7 @@ async function ensurePostgresSchema() {
         track_fingerprint text NOT NULL,
         world_mode text NOT NULL,
         wallet_address text,
+        owner_address text,
         payment_reference text UNIQUE,
         payment_amount_eth text,
         payment_chain_id integer,
@@ -1083,6 +1081,7 @@ async function ensurePostgresSchema() {
         ADD COLUMN IF NOT EXISTS registry_ref text,
         ADD COLUMN IF NOT EXISTS registry_track_id text,
         ADD COLUMN IF NOT EXISTS registry_tx_hash text,
+        ADD COLUMN IF NOT EXISTS owner_address text,
         ADD COLUMN IF NOT EXISTS report jsonb;
 
       CREATE UNIQUE INDEX IF NOT EXISTS echo_flows_nullifier_track_idx
@@ -1228,6 +1227,7 @@ function rowToFlow(row: QueryResultRow): EchoFlow {
     trackFingerprint: row.track_fingerprint,
     worldMode: row.world_mode,
     walletAddress: row.wallet_address ?? undefined,
+    ownerAddress: row.owner_address ?? undefined,
     paymentReference: row.payment_reference ?? undefined,
     paymentAmountEth: row.payment_amount_eth ?? undefined,
     paymentChainId: row.payment_chain_id ?? undefined,

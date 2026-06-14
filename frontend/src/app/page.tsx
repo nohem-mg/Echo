@@ -30,8 +30,9 @@ import {
   Waves,
   X,
 } from "lucide-react";
-import { parseEther, toHex, type Abi } from "viem";
-import { useAccount, useChainId, usePublicClient, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { parseEther, toHex, keccak256, type Abi } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { useAccount, useChainId, usePublicClient, useSignMessage, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
 import { echoSounds } from "@/lib/sound-design";
@@ -264,14 +265,8 @@ const pipelineSteps = [
   },
   {
     id: "03",
-    title: "Commercial deltas",
-    detail: "ISRC to preview",
-    meta: "3 candidates",
-  },
-  {
-    id: "04",
     title: "Final report",
-    detail: "TEE attested verdict",
+    detail: "CRE pipeline summary",
     meta: "CLEAN",
   },
 ];
@@ -396,6 +391,59 @@ function getProofNullifier(result: IDKitResult) {
   }
 
   return "";
+}
+
+type AgentkitChallenge = {
+  domain: string;
+  uri: string;
+  version: string;
+  chainId: string;
+  nonce: string;
+  issuedAt: string;
+};
+
+async function buildAgentkitHeader(
+  address: string,
+  signMsg: (message: string) => Promise<string>,
+): Promise<string | undefined> {
+  try {
+    const challenge = (await fetch("/api/agentkit/challenge").then((r) => r.json())) as AgentkitChallenge;
+    const chainIdNumeric = Number(challenge.chainId.split(":")[1]);
+
+    // SIWE message format (agentkit-core formatSIWEMessage — eip191, no statement)
+    const message = [
+      `${challenge.domain} wants you to sign in with your Ethereum account:`,
+      address,
+      "",
+      `URI: ${challenge.uri}`,
+      `Version: ${challenge.version}`,
+      `Chain ID: ${chainIdNumeric}`,
+      `Nonce: ${challenge.nonce}`,
+      `Issued At: ${challenge.issuedAt}`,
+    ].join("\n");
+
+    const signature = await signMsg(message);
+
+    const payload = {
+      domain: challenge.domain,
+      address,
+      uri: challenge.uri,
+      version: challenge.version,
+      chainId: challenge.chainId,
+      type: "eip191",
+      nonce: challenge.nonce,
+      issuedAt: challenge.issuedAt,
+      signature,
+    };
+
+    // Standard base64 as expected by agentkit-core parseAgentkitHeader
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join("");
+    return btoa(binary);
+  } catch (err) {
+    console.warn("[Echo] AgentKit signing skipped:", err);
+    return undefined;
+  }
 }
 
 async function createAudioFingerprint(file: File) {
@@ -634,6 +682,22 @@ export default function Home() {
   const chainId = useChainId();
   const publicClient = usePublicClient({ chainId: sepolia.id });
   const { switchChain } = useSwitchChain();
+  const { signMessageAsync } = useSignMessage();
+  const [ephemeralOwner, setEphemeralOwner] = useState<any>(null);
+
+  useEffect(() => {
+    setEphemeralOwner(null);
+  }, [address]);
+
+  async function getOrDeriveOwnerKey() {
+    if (ephemeralOwner) return ephemeralOwner;
+    setPipelineProgressStatus("Signing derivation message to generate ephemeral owner key...");
+    const sig = await signMessageAsync({ message: "Sign to derive Echo ephemeral owner key" });
+    const privateKey = keccak256(sig);
+    const account = privateKeyToAccount(privateKey);
+    setEphemeralOwner(account);
+    return account;
+  }
 
   const pendingPaymentHash = payment.status === "pending" ? payment.hash : undefined;
   const pendingPaymentReference = payment.status === "pending" ? payment.reference : undefined;
@@ -689,7 +753,7 @@ export default function Home() {
         return `Pipeline CLEAN. Registry seal confirmed · ${flow.registryTxHash.slice(0, 12)}...`;
       }
 
-      return "Pipeline CLEAN. Waiting for the CRE Registry transaction.";
+      return "Pipeline CLEAN. Waiting for the CRE Network transaction.";
     }
 
     if (flow?.status === "pipeline_blocked") {
@@ -878,7 +942,7 @@ export default function Home() {
         if (data.flow?.status === "pipeline_completed") {
           setPipelineProgressStatus(
             data.flow.registryTxHash
-              ? "Pipeline completed: Registry seal confirmed on Sepolia"
+              ? "Pipeline completed: Network seal confirmed on Sepolia"
               : data.flow.report?.verdict === "CLEAN" && echoConfig.registryAddress
                 ? "Verdict CLEAN — inscription on-chain en cours..."
                 : "Pipeline completed: final report received",
@@ -1280,7 +1344,7 @@ export default function Home() {
               }
             : null,
         );
-        setPipelineProgressStatus("Mock pipeline complete. Demo Registry seal available.");
+        setPipelineProgressStatus("Mock pipeline complete. Demo Network seal available.");
       }, 2500);
     }
 
@@ -1700,6 +1764,17 @@ export default function Home() {
       const activeFlow = uploadData.flow;
       setFlow(activeFlow);
       setLivePipelineSteps(uploadData.pipeline);
+      setPipelineProgressStatus("Deriving owner key...");
+      const ownerAccount = await getOrDeriveOwnerKey();
+
+      // Pre-sign AgentKit credential for /api/report (valid 1h — covers full pipeline duration).
+      // Only triggered when NEXT_PUBLIC_ECHO_AGENTKIT_ENABLED=true (production/staging).
+      let agentkitHeader: string | undefined;
+      if (address && process.env.NEXT_PUBLIC_ECHO_AGENTKIT_ENABLED === "true") {
+        setPipelineProgressStatus("Signing AgentKit access credential...");
+        agentkitHeader = await buildAgentkitHeader(address, (msg) => signMessageAsync({ message: msg }));
+      }
+
       setPipelineProgressStatus("Starting CRE handoff...");
 
       console.log("[Echo] Starting pipeline...");
@@ -1709,6 +1784,8 @@ export default function Home() {
         body: JSON.stringify({
           flowId,
           trackId: uploadData.track.id,
+          owner: ownerAccount.address,
+          ...(agentkitHeader ? { agentkitHeader } : {}),
         }),
       });
 
@@ -1770,14 +1847,27 @@ export default function Home() {
     }
 
     try {
-      setPipelineProgressStatus("Sending revealTrack transaction to Ethereum Sepolia...");
+      const ownerAccount = await getOrDeriveOwnerKey();
+
+      setPipelineProgressStatus("Signing reveal authorization...");
       const profileHash = toBytes32Hex(activeReport?.submitted_track?.fingerprint ?? flow?.trackFingerprint ?? "pending-profile");
+
+      const cleanTrackId = certificateTrackId.toLowerCase().replace("0x", "");
+      const cleanProfileHash = profileHash.toLowerCase().replace("0x", "");
+      const encoded = `0x${cleanTrackId}${cleanProfileHash}` as `0x${string}`;
+      const digest = keccak256(encoded);
+
+      const ownerSig = await ownerAccount.signMessage({
+        message: { raw: digest },
+      });
+
+      setPipelineProgressStatus("Sending revealTrack transaction to Ethereum Sepolia...");
 
       const txHash = await writeRegistryContract({
         address: echoConfig.registryAddress as `0x${string}`,
         abi: registryContractAbi,
         functionName: "revealTrack",
-        args: [certificateTrackId, profileHash],
+        args: [certificateTrackId, profileHash, ownerSig],
       });
 
       setPipelineProgressStatus(`Track revealed on-chain! Tx: ${txHash.slice(0, 12)}...`);
@@ -1789,7 +1879,7 @@ export default function Home() {
 
   async function handlePublishToSoundCloud() {
     if (!flow?.id || !isCleanAndSealed) {
-      setSoundCloudPublish({ status: "error", error: "SoundCloud publish opens after a CLEAN Registry seal." });
+      setSoundCloudPublish({ status: "error", error: "SoundCloud publish opens after a CLEAN Network seal." });
       return;
     }
 
@@ -1855,14 +1945,16 @@ export default function Home() {
 
   const displaySteps = useMemo<DisplayStep[]>(() => {
     if (livePipelineSteps.length > 0) {
-      return livePipelineSteps.map(s => ({
-        id: s.stepKey,
-        title: s.label,
-        detail: s.detail,
-        meta: s.meta || (s.status === "running" ? `${s.progress}%` : undefined),
-        status: s.status,
-        reason: s.reason,
-      }));
+      return livePipelineSteps
+        .filter(s => s.stepKey !== "03")
+        .map(s => ({
+          id: s.stepKey === "04" ? "03" : s.stepKey,
+          title: s.label,
+          detail: s.detail === "Ready for ISRC preview comparison" ? "CRE pipeline summary" : s.detail,
+          meta: s.meta || (s.status === "running" ? `${s.progress}%` : undefined),
+          status: s.status,
+          reason: s.reason,
+        }));
     }
 
     return pipelineSteps.map(s => ({
@@ -1919,7 +2011,7 @@ export default function Home() {
         title: "CLEAN",
         subtitle: hasRegistrySeal
           ? "The track has been sealed on Ethereum Sepolia."
-          : "The track passed analysis. Waiting for the Registry transaction.",
+          : "The track passed analysis. Waiting for the Network transaction.",
         badgeText: hasRegistrySeal ? "SEALED" : "CLEAN - AWAITING SEAL",
         badgeClass: "border-[#9ef7c9]/60 bg-[#9ef7c9]/10 text-[#9ef7c9]",
         colorClass: "text-[#9ef7c9]",
@@ -2189,7 +2281,7 @@ export default function Home() {
                         : pipelineStarted
                           ? "Analysis running"
                           : "Upload / Start analysis"
-                  : "Pay Sepolia fee"}
+                  : "Start process"}
               </button>
             </div>
 
@@ -2263,7 +2355,7 @@ export default function Home() {
             </h2>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 sm:gap-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 sm:gap-4">
             {displaySteps.map((step) => {
               const liveState = getLiveStepState(step.status);
               const progressWidth = step.meta && step.meta.endsWith("%")
@@ -2434,7 +2526,7 @@ export default function Home() {
                 {activeReport?.ai_summary
                   ?? livePipelineSteps.find((step) => step.status === "blocked")?.reason
                   ?? flow.error
-                  ?? "No Registry transaction was created."}
+                  ?? "No Network transaction was created."}
               </p>
               {flow.error?.includes("Trial épuisé") && (
                 <button 
@@ -2546,7 +2638,7 @@ export default function Home() {
                   copyValue={certificateTrackId}
                 />
                 <CertificateMetric
-                  label="Registry tx"
+                  label="Network tx"
                   value={certificateTxHash ?? "Not provided"}
                   copyValue={certificateTxHash ?? undefined}
                 />
@@ -2559,14 +2651,14 @@ export default function Home() {
                   }
                 />
                 <CertificateMetric
-                  label="Registry"
+                  label="Network"
                   value={echoConfig.registryChainId === sepolia.id ? "Ethereum Sepolia" : `Chain ${echoConfig.registryChainId}`}
                 />
               </div>
               <div className="mt-8 flex flex-wrap gap-3">
                 <a
                   className="inline-flex min-h-12 items-center gap-2 rounded-full border border-[#050505]/20 px-5 font-black transition hover:border-[#050505]"
-                  href={`${echoConfig.registryExplorer}/tx/${certificateTxHash}`}
+                  href={`${echoConfig.registryExplorer}/tx/${certificateTxHash}#internal`}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -2584,7 +2676,7 @@ export default function Home() {
                 no seal yet
               </p>
               <h2 className="mt-4 max-w-3xl font-display text-[clamp(3rem,7vw,7rem)] font-black leading-[0.86]">
-                Certificate appears only after a clean Registry transaction.
+                Certificate appears only after a clean Network transaction.
               </h2>
               <p className="mt-6 max-w-2xl text-lg leading-7 text-white/62">
                 Echo will show the commitment hash, registry reference, track ID, Sepolia transaction, and timestamp after the CRE/backend writes a confirmed CLEAN seal.
@@ -2592,7 +2684,7 @@ export default function Home() {
               {flow?.status === "pipeline_completed" ? (
                 <p className="mt-6 rounded-[8px] border border-[#9ef7c9]/25 bg-[#9ef7c9]/10 p-4 text-sm font-bold text-[#9ef7c9]">
                   {flow.registryTxHash
-                    ? "Registry seal confirmed on Sepolia."
+                    ? "Network seal confirmed on Sepolia."
                     : isSealingOnChain
                       ? "Verdict CLEAN — registerTrack et callback CRE en cours..."
                       : "Verdict CLEAN reçu — inscription on-chain après analyse (pas avant)."}
@@ -2696,7 +2788,7 @@ export default function Home() {
                 </button>
               ) : (
                 <p className="rounded-[8px] border border-white/10 px-4 py-3 text-sm font-bold text-white/55">
-                  Rights sales unlock after a CLEAN Registry seal.
+                  Rights sales unlock after a CLEAN Network seal.
                 </p>
               )}
             </div>

@@ -10,8 +10,6 @@ export type Verdict = "CLEAN" | "SIMILAR" | "REJECTED" | "ERROR";
 // Pipeline input (HTTP trigger payload)
 // --------------------------------------------------------------------------
 export type PipelineInput = {
-  /** analysis = full DAG; seal = onReport only after wallet registerTrack (CLEAN). */
-  mode?: "analysis" | "seal";
   // Echo frontend flow id, used only for internal /api/pipeline/events updates.
   flowId?: string;
   // Raw audio reference (signed backend URL or opaque storage ref).
@@ -20,10 +18,13 @@ export type PipelineInput = {
   commitmentHash: string;
   // keccak256(track_id) from the PostgreSQL registry row, persisted by frontend.
   registryRef?: string;
-  // World ID nullifier (anti-Sybil), passed through to the callback.
-  worldNullifier: string;
-  // Registry bytes32 trackId consumed by Registry.onReport().
-  trackId: string;
+  // Artist's ephemeral owner-key address (never their real wallet), derived by
+  // the frontend and threaded into the CRE payload for Registry.onReport().
+  owner: string;
+  // Signed AgentKit header produced by the frontend wallet; forwarded to the
+  // dev-gateway on the /api/report call to prove the request is backed by a
+  // verified human. Optional: omitted in dev/simulation (ECHO_REQUIRE_AGENTKIT=0).
+  agentkitHeader?: string;
 };
 
 // --------------------------------------------------------------------------
@@ -149,7 +150,8 @@ export type AgentAttestation = {
 // --------------------------------------------------------------------------
 export type PipelineResult = {
   verdict: Verdict;
-  trackId: string;
+  /** Artist's ephemeral owner-key address — sourced from PipelineInput.owner. */
+  owner: string;
   commitmentHash: string;
   // Human-readable reason on halt (plagiarism, similar, error).
   reason?: string;
@@ -165,8 +167,8 @@ export type PipelineResult = {
   registryRef?: string;
   /** Ready-to-send callback payload (set only for CLEAN after dispatch). */
   callback?: {
-    trackId: string;
-    verdict: Verdict;
+    owner: string;
+    commitmentHash: string;
     attestation: string;
   };
 };
@@ -179,12 +181,7 @@ export const THRESHOLD_COVER = 85;     // 2A: >=85% -> REJECTED (halt, humming/c
 export const THRESHOLD_SIMILAR = 75;   // 2B: >=75% -> SIMILAR (halt, MIDI composition)
 export const THRESHOLD_ACR_MIN = 50;   // 2A: <50%  -> Step 3 skipped
 
-// --------------------------------------------------------------------------
-// Registry.Status enum (Solidity: SEALED=0, REVEALED=1, SIMILAR=2, REJECTED=3)
-// Maps our pipeline Verdict -> uint8 inside Registry.onReport().
-// --------------------------------------------------------------------------
-export const VERDICT_TO_STATUS: Record<string, number> = {
-  CLEAN: 0,    // SEALED
-  SIMILAR: 2,  // SIMILAR
-  REJECTED: 3, // REJECTED
-};
+// Note: VERDICT_TO_STATUS was removed — the new Registry enum is only
+// { SEALED=0, REVEALED=1 }. The CRE never writes a verdict value;
+// reaching onReport() already means CLEAN. Reveal is handled by the
+// frontend via owner-key EIP-191 signatures.

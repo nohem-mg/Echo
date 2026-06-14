@@ -17,7 +17,6 @@ import {
 import type { CONFIDENTIAL_HTTP_CLIENT_PB } from "@chainlink/cre-sdk/pb";
 import { encodeAbiParameters, parseAbiParameters, type Hex } from "viem";
 import type { AgentAttestation, PipelineResult } from "./types";
-import { VERDICT_TO_STATUS } from "./types";
 
 type HTTPResponse = CONFIDENTIAL_HTTP_CLIENT_PB.HTTPResponse;
 
@@ -73,13 +72,18 @@ export function requireAgentAttestation(response: HTTPResponse, step: string): A
 
 /**
  * ABI-encoded payload for runtime.report().
- * The Registry.onReport receiver decodes (trackId, verdict) from rawReport.
+ * The Registry.onReport receiver decodes abi.encode(address owner, bytes32 commitmentHash,
+ * bytes32 registryRef) from rawReport and derives trackId on-chain.
+ * Reaching onReport already means CLEAN — no verdict byte is written.
  */
 export function encodeCallbackReportPayload(result: PipelineResult): Hex {
-  const status = VERDICT_TO_STATUS[result.verdict] ?? 3; // default REJECTED on unknown
   return encodeAbiParameters(
-    parseAbiParameters("bytes32 trackId, uint8 verdict"),
-    [result.trackId as Hex, status],
+    parseAbiParameters("address owner, bytes32 commitmentHash, bytes32 registryRef"),
+    [
+      result.owner as Hex,
+      result.commitmentHash as Hex,
+      (result.registryRef ?? `0x${"00".repeat(32)}`) as Hex,
+    ],
   );
 }
 

@@ -1,19 +1,21 @@
 // ==========================================================================
-// Echo — Registry callback payload (Cyriac Registry.onReport)
+// Echo — Registry callback payload (Registry.onReport)
 // --------------------------------------------------------------------------
-// Section 5 will wire EVMClient.writeReport() once the Registry address is
-// available. Section 4 prepares the attestation-bearing payload now.
+// The new one-pass Registry creates and seals atomically in onReport().
+// SIMILAR, REJECTED, and ERROR never produce an on-chain callback.
 // ==========================================================================
 
-import type { PipelineResult, Verdict } from "./types";
+import type { PipelineResult } from "./types";
 
 /**
  * Payload dispatched to Registry for a CLEAN seal.
  * SIMILAR, REJECTED, and ERROR never produce an on-chain callback.
+ * No verdict byte — reaching onReport already means CLEAN.
  */
 export type RegistryCallbackPayload = {
-  trackId: string;
-  verdict: Verdict;
+  /** Artist's ephemeral owner-key address (never their real wallet). */
+  owner: string;
+  commitmentHash: string;
   /** Hex-encoded CRE rawReport bytes (DON-signed, verified on-chain by the forwarder). */
   attestation: string;
 };
@@ -26,8 +28,8 @@ export function buildRegistryCallback(
     return undefined;
   }
   return {
-    trackId: result.trackId,
-    verdict: result.verdict,
+    owner: result.owner,
+    commitmentHash: result.commitmentHash,
     attestation: result.attestation,
   };
 }

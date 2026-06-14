@@ -10,10 +10,15 @@ from echo_common.schemas.midi import MidiSequence
 from pydantic import BaseModel, ConfigDict, Field
 
 
+import uuid
+
+
 class RegisterRequest(BaseModel):
     # Accept "midi_sequence" or the CRE's "midiSequence".
     model_config = ConfigDict(populate_by_name=True)
-    track_id: str
+    # track_id is now optional — the registry generates one if not supplied.
+    # The CRE no longer pre-computes it; the backend owns the DB primary key.
+    track_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     midi_sequence: MidiSequence = Field(alias="midiSequence")
     # Audio fingerprint, stored alongside the track. Optional: the upstream producer
     # (Step 2A / Step 4) may not be wired yet.
