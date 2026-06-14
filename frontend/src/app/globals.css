@@ -215,7 +215,7 @@ button {
 }
 
 .marquee {
-  animation: marquee 26s linear infinite;
+  animation: marquee 45s linear infinite;
 }
 
 @keyframes spin-slow {
