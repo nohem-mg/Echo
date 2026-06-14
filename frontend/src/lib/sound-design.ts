@@ -303,10 +303,8 @@ function playFromUserGesture(id: SoundId) {
     return;
   }
 
-  void ctx.resume().then((resumed) => {
-    if (resumed) {
-      playNow();
-    }
+  void ctx.resume().then(() => {
+    playNow();
   });
 }
 
@@ -489,8 +487,8 @@ function startVinylHoverFromUserGesture() {
     return;
   }
 
-  void ctx.resume().then((resumed) => {
-    if (!resumed || !canPlayVinylHover() || vinylHoverState) {
+  void ctx.resume().then(() => {
+    if (!canPlayVinylHover() || vinylHoverState) {
       return;
     }
 
@@ -547,8 +545,8 @@ export const echoSounds = {
       if (audioContext?.state === "running") {
         playTone(audioContext, 660, 0.06, { gain: 0.35 });
       } else {
-        void audioContext?.resume().then((resumed) => {
-          if (resumed && audioContext) {
+        void audioContext?.resume().then(() => {
+          if (audioContext) {
             playTone(audioContext, 660, 0.06, { gain: 0.35 });
           }
         });
