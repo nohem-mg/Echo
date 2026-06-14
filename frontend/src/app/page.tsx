@@ -7,7 +7,6 @@ import Image from "next/image";
 import QRCode from "qrcode";
 import {
   ArrowUpRight,
-  Check,
   ChevronDown,
   CircleDot,
   Clock,
@@ -23,13 +22,12 @@ import {
   Radio,
   Sparkles,
   Tag,
-  Upload,
-  Volume2,
-  VolumeX,
   WalletCards,
   Waves,
   X,
 } from "lucide-react";
+import { Check, Upload } from "@phosphor-icons/react";
+import { SpeakerHigh as Volume2, SpeakerX as VolumeX } from "@phosphor-icons/react";
 import { parseEther, toHex, keccak256, type Abi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { useAccount, useChainId, usePublicClient, useSignMessage, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
@@ -271,7 +269,7 @@ const pipelineSteps = [
   },
 ];
 
-const sponsors = ["World ID", "RainbowKit", "ETH Sepolia", "Chainlink CRE", "Confidential AI", "Unlink", "Walrus"];
+const sponsors = ["CHAINLINK", "WORLD ID", "UNLINK"];
 
 const mockReports: Record<"CLEAN" | "SIMILAR" | "REJECTED", EchoReport> = {
   CLEAN: {
@@ -1334,14 +1332,14 @@ export default function Home() {
         setFlow(prev =>
           prev
             ? {
-                ...prev,
-                status: "pipeline_completed",
-                commitmentHash: toBytes32Hex(trackFingerprint || prev.trackFingerprint),
-                registryRef: toBytes32Hex(prev.id),
-                registryTrackId: toBytes32Hex(`mock-track-${prev.id}`),
-                registryTxHash: `0x${"1".repeat(64)}`,
-                report: mockReports.CLEAN,
-              }
+              ...prev,
+              status: "pipeline_completed",
+              commitmentHash: toBytes32Hex(trackFingerprint || prev.trackFingerprint),
+              registryRef: toBytes32Hex(prev.id),
+              registryTrackId: toBytes32Hex(`mock-track-${prev.id}`),
+              registryTxHash: `0x${"1".repeat(64)}`,
+              report: mockReports.CLEAN,
+            }
             : null,
         );
         setPipelineProgressStatus("Mock pipeline complete. Demo Network seal available.");
@@ -1447,7 +1445,7 @@ export default function Home() {
       setPayment({ status: "idle" });
       setPendingQuote(null);
       setHistoryOpen(false);
-    } catch {}
+    } catch { }
   }
 
   async function handleAudioFile(file: File) {
@@ -2049,14 +2047,11 @@ export default function Home() {
       <div className="fixed inset-x-0 top-0 z-40 border-b border-white/10 bg-[#050505]/75 backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <a className="flex items-center gap-3" href="#top" aria-label="Echo home">
-            <span className="grid size-10 place-items-center rounded-full bg-[#f59abd] text-[#050505]">
-              <Radio className="size-5" aria-hidden="true" />
-            </span>
+            <img src="/logo.jpeg" alt="Echo logo" className="size-10 rounded-full object-cover" />
             <span className="font-display text-xl font-black">Echo</span>
           </a>
-          <div className="hidden items-center gap-2 text-sm text-white/70 md:flex">
-            <span className="rounded-full border border-white/15 px-4 py-2">NYC 2026</span>
-            <span className="rounded-full border border-white/15 px-4 py-2">Artist prior-art</span>
+          <div className="hidden absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 items-center gap-2 text-sm text-white/70 md:flex">
+            <span className="rounded-full border border-white/15 px-4 py-2">ETH GLOBAL NYC 2026</span>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -2085,10 +2080,7 @@ export default function Home() {
 
             <div className="relative z-10 flex h-full flex-col justify-between gap-10">
               <div>
-                <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-white/70">
-                  <CircleDot className="echo-status-pulse size-4 text-[#9ef7c9]" aria-hidden="true" />
-                  Human-backed confidential music proof
-                </div>
+
 
                 <h1 className="max-w-4xl font-display text-[clamp(4rem,13vw,12rem)] font-black leading-[0.78] text-[#f59abd]">
                   Echo
@@ -2105,13 +2097,13 @@ export default function Home() {
                     <LockKeyhole className="echo-lock-nudge size-5 text-[#f59abd]" aria-hidden="true" />
                   </div>
                   <p className="max-w-xl text-lg leading-7 text-white/72">
-                    Upload your track, run a confidential plagiarism check, and seal a prior-art proof on-chain — reveal it publicly whenever you&apos;re ready.
+                    Upload your track, run a confidential plagiarism check, and seal a prior-art proof on-chain. Reveal it publicly whenever you&apos;re ready.
                   </p>
                 </div>
 
-            <div className="relative z-20 mx-auto aspect-square w-full max-w-[280px]">
-              <VinylVisual isPlaying={isPlaying} />
-            </div>
+                <div className="relative z-20 mx-auto aspect-square w-full max-w-[280px]">
+                  <VinylVisual isPlaying={isPlaying} />
+                </div>
               </div>
             </div>
           </div>
@@ -2194,11 +2186,10 @@ export default function Home() {
             )}
 
             <label
-              className={`group block cursor-pointer rounded-[8px] border transition-all duration-200 p-6 ${
-                isDragging
-                  ? "border-solid border-[#f59abd] bg-[#f59abd]/10 scale-[1.01]"
-                  : "border-dashed border-white/25 bg-white/[0.03] hover:border-[#f59abd] hover:bg-[#f59abd]/10"
-              }`}
+              className={`group block cursor-pointer rounded-[8px] border transition-all duration-200 p-6 ${isDragging
+                ? "border-solid border-[#f59abd] bg-[#f59abd]/10 scale-[1.01]"
+                : "border-dashed border-white/25 bg-white/[0.03] hover:border-[#f59abd] hover:bg-[#f59abd]/10"
+                }`}
               onDragOver={(e) => {
                 e.preventDefault();
                 setIsDragging(true);
@@ -2270,7 +2261,6 @@ export default function Home() {
                 onClick={handlePrimaryAction}
                 type="button"
               >
-                <Upload className="size-5" aria-hidden="true" />
                 {payment.status === "paid"
                   ? isStartingPipeline
                     ? "Starting..."
@@ -2317,8 +2307,8 @@ export default function Home() {
             <div className="mt-6 rounded-[8px] border border-white/10 bg-black/40">
               {displaySteps.map((step) => {
                 const liveState = getLiveStepState(step.status);
-                const stepState: StepState = livePipelineSteps.length > 0 
-                  ? liveState 
+                const stepState: StepState = livePipelineSteps.length > 0
+                  ? liveState
                   : (pipelineStarted ? "active" : "idle");
                 return (
                   <PipelineRow key={step.id} step={step} state={stepState} />
@@ -2328,16 +2318,18 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mx-auto mt-8 flex w-full max-w-7xl overflow-hidden rounded-full border border-white/10 bg-white/[0.03] py-3">
-          <div className="marquee flex min-w-full shrink-0 items-center gap-8 px-6 text-sm font-bold uppercase text-white/60">
-            {[...sponsors, ...sponsors].map((item, index) => (
-              <span className="flex items-center gap-8" key={`${item}-${index}`}>
+        <div className="mx-auto mt-8 flex w-full max-w-7xl flex-col gap-4 overflow-hidden py-4" style={{ maskImage: "linear-gradient(to right, transparent, black 10%, black 90%, transparent)", WebkitMaskImage: "linear-gradient(to right, transparent, black 10%, black 90%, transparent)" }}>
+          <div className="marquee flex min-w-full shrink-0 items-center gap-4 pr-4 text-sm font-bold uppercase text-white/80">
+            {Array(20).fill(sponsors).flat().map((item, index) => (
+              <span className="flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-6 py-2.5 backdrop-blur-sm whitespace-nowrap" key={`row1-${item}-${index}`}>
                 {item}
-                <Sparkles
-                  className="echo-sparkle-twinkle size-4 text-[#fff7cf]"
-                  style={{ animationDelay: `${(index % 5) * 0.45}s` }}
-                  aria-hidden="true"
-                />
+              </span>
+            ))}
+          </div>
+          <div className="marquee flex min-w-full shrink-0 items-center gap-4 pr-4 text-sm font-bold uppercase text-white/80" style={{ animationDirection: "reverse", animationDuration: "55s" }}>
+            {Array(20).fill(sponsors).flat().reverse().map((item, index) => (
+              <span className="flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-6 py-2.5 backdrop-blur-sm whitespace-nowrap" key={`row2-${item}-${index}`}>
+                {item}
               </span>
             ))}
           </div>
@@ -2529,7 +2521,7 @@ export default function Home() {
                   ?? "No Network transaction was created."}
               </p>
               {flow.error?.includes("Trial épuisé") && (
-                <button 
+                <button
                   className="mt-6 inline-flex items-center gap-2 rounded-full border border-[#f59abd]/50 bg-[#f59abd]/10 px-6 py-2.5 text-sm font-bold text-[#f59abd] transition hover:bg-[#f59abd]/20 cursor-not-allowed opacity-70"
                   disabled
                 >
