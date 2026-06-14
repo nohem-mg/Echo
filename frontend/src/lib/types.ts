@@ -89,6 +89,7 @@ export type EchoFlow = {
   trackFingerprint: string;
   worldMode: "world" | "mock";
   walletAddress?: `0x${string}`;
+  ownerAddress?: `0x${string}`;
   paymentReference?: string;
   paymentAmountEth?: string;
   paymentChainId?: number;

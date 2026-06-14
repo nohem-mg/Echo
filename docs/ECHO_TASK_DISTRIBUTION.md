@@ -209,15 +209,19 @@
 - [ ] Endpoint `POST /api/registry` (ingestion): insert MIDI + precalculated intervals → return `registryRef` pointer `[MVP]`
 - [ ] Endpoint `POST /api/compare/private` (comparison): run composition comparison using irreversible intervals `[MVP]`
 
-#### 8. Unlink — Private Payments
+#### 8. Unlink — On-chain Privacy Layer
 - [ ] Install `@unlink-xyz/sdk` and configure private ethereum-sepolia pool `[IMP]`
-- [ ] Route agents' x402 payments (Steps 2A, 2B, 3, 4) via Unlink `deposit()` + `transfer()` between private accounts `[IMP]`
-- [ ] Call `registerTrack` via `execute()` from an Unlink `ExecutionAccount` (where `msg.sender` is the `ExecutionAccount`, and the artist address is passed explicitly as a param) `[IMP]`
-  - *Signature:* `registerTrack(nullifier, commitmentHash, registryRef, artist)`
-- [ ] Call `revealTrack` via `execute()` similarly `[IMP]`
-  - *Signature:* `revealTrack(trackId, fullProfileHash, artist)`
-- [ ] Verify that transaction amounts are invisible on-chain from the outside `[IMP]`
-- [ ] Route SoundCloud upload via Unlink (private audio transmission) `[BONUS]`
+- [ ] Derive the artist's Unlink account from a wallet signature (`fromMetaMask` / `buildDeriveSeedMessage`); seed-backed account required for `execute()` `[IMP]`
+- [ ] Backend register route `/api/unlink/register` (`admin.users.register`); do NOT use the EOA as `userId` and do NOT persist the EOA↔unlink mapping `[IMP]`
+- [ ] Fund the private account via `depositWithApproval()` `[IMP]`
+- [ ] Call `registerTrack` via `execute()` from an Unlink `ExecutionAccount` (`msg.sender` is the pooled `ExecutionAccount`; the **owner identity is passed explicitly as `ownerKey`**, never inferred from `msg.sender`) `[IMP]`
+  - *Signature:* `registerTrack(nullifier, commitmentHash, ownerKey, registryRef)`
+- [ ] Call `revealTrack` via `execute()`; ownership proven by **signature** against `ownerKey`, not `msg.sender` `[IMP]`
+  - *Signature:* `revealTrack(trackId, fullProfileHash, signature)`
+- [ ] (Optional, later) Private license settlement between two parties via Unlink `transfer`/`execute` `[BONUS]`
+- [ ] Verify that transaction amounts/parties are invisible on-chain from the outside `[IMP]`
+
+> Unlink is on-chain account privacy only. It does **not** do x402, file/SoundCloud uploads, or audio transit. SoundCloud publishing is the separate `soundcloud-service`.
 
 #### 9. Documentation & Repo
 - [ ] `README.md`: describe all endpoints, request/response formats `[MVP]`

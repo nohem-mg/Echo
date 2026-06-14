@@ -81,32 +81,46 @@ describe("verifyAgentAttestations", () => {
 });
 
 describe("encodeCallbackReportPayload", () => {
-  test("ABI-encodes trackId and uint8 verdict status", () => {
+  const OWNER = `0x${'ab'.repeat(20)}` as const;   // valid EVM address (20 bytes)
+  const COMMITMENT = `0x${'cd'.repeat(32)}` as const;
+  const REGISTRY_REF = `0x${'ef'.repeat(32)}` as const;
+
+  test("ABI-encodes owner, commitmentHash, and registryRef", () => {
     const result: PipelineResult = {
       verdict: "CLEAN",
-      trackId: `0x${"ab".repeat(32)}`,
-      commitmentHash: `0x${"cd".repeat(32)}`,
+      owner: OWNER,
+      commitmentHash: COMMITMENT,
+      registryRef: REGISTRY_REF,
     };
 
     const encoded = encodeCallbackReportPayload(result);
 
     expect(encoded.startsWith("0x")).toBe(true);
-    expect(encoded.length).toBeGreaterThan(10);
+    // abi.encode(address, bytes32, bytes32) = 3 × 32 bytes = 96 bytes = 192 hex chars
+    expect(encoded.length).toBe(2 + 192);
   });
 
-  test("maps CLEAN->0, SIMILAR->2, REJECTED->3", () => {
-    const base: Omit<PipelineResult, "verdict"> = {
-      trackId: `0x${"ab".repeat(32)}`,
-      commitmentHash: `0x${"cd".repeat(32)}`,
+  test("falls back to zero bytes32 when registryRef is absent", () => {
+    const result: PipelineResult = {
+      verdict: "CLEAN",
+      owner: OWNER,
+      commitmentHash: COMMITMENT,
     };
-    const clean = encodeCallbackReportPayload({ ...base, verdict: "CLEAN" });
-    const similar = encodeCallbackReportPayload({ ...base, verdict: "SIMILAR" });
-    const rejected = encodeCallbackReportPayload({ ...base, verdict: "REJECTED" });
 
-    // All three must differ (different uint8 status bytes).
-    expect(clean).not.toBe(similar);
-    expect(clean).not.toBe(rejected);
-    expect(similar).not.toBe(rejected);
+    const encoded = encodeCallbackReportPayload(result);
+    expect(encoded.startsWith("0x")).toBe(true);
+    expect(encoded.length).toBe(2 + 192);
+  });
+
+  test("two different owners produce different payloads", () => {
+    const base: Omit<PipelineResult, "owner"> = {
+      verdict: "CLEAN",
+      commitmentHash: COMMITMENT,
+      registryRef: REGISTRY_REF,
+    };
+    const enc1 = encodeCallbackReportPayload({ ...base, owner: `0x${'11'.repeat(20)}` });
+    const enc2 = encodeCallbackReportPayload({ ...base, owner: `0x${'22'.repeat(20)}` });
+    expect(enc1).not.toBe(enc2);
   });
 });
 
@@ -114,27 +128,27 @@ describe("buildRegistryCallback", () => {
   test("returns callback payload for CLEAN with attestation", () => {
     const result: PipelineResult = {
       verdict: "CLEAN",
-      trackId: "0xtrack",
+      owner: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
       commitmentHash: "0xabc",
       attestation: "0xdeadbeef",
     };
 
     expect(buildRegistryCallback(result)).toEqual({
-      trackId: "0xtrack",
-      verdict: "CLEAN",
+      owner: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      commitmentHash: "0xabc",
       attestation: "0xdeadbeef",
     });
   });
 
   test("returns undefined for SIMILAR and REJECTED with attestation", () => {
-    const base = { trackId: "0xtrack", commitmentHash: "0xabc", attestation: "0xproof" };
+    const base = { owner: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", commitmentHash: "0xabc", attestation: "0xproof" };
     expect(buildRegistryCallback({ ...base, verdict: "SIMILAR" })).toBeUndefined();
     expect(buildRegistryCallback({ ...base, verdict: "REJECTED" })).toBeUndefined();
   });
 
   test("returns undefined for ERROR or missing attestation", () => {
-    expect(buildRegistryCallback({ verdict: "ERROR", trackId: "0x1", commitmentHash: "0xabc" })).toBeUndefined();
-    expect(buildRegistryCallback({ verdict: "CLEAN", trackId: "0x1", commitmentHash: "0xabc" })).toBeUndefined();
+    expect(buildRegistryCallback({ verdict: "ERROR", owner: "0x1", commitmentHash: "0xabc" })).toBeUndefined();
+    expect(buildRegistryCallback({ verdict: "CLEAN", owner: "0x1", commitmentHash: "0xabc" })).toBeUndefined();
   });
 });
 

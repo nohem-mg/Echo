@@ -66,10 +66,9 @@ export function stepCompareCommercial<C>(
 export function stepRegister<C>(
   runtime: Runtime<C>,
   baseUrl: string,
-  args: { trackId: string; midiSequence: string; fingerprint?: string },
+  args: { midiSequence: string; fingerprint?: string },
 ): Deferred<RegisterResponse> {
   return backendPost<C, RegisterResponse>(runtime, baseUrl, "/api/registry", {
-    track_id: args.trackId,
     midiSequence: args.midiSequence,
     ...(args.fingerprint ? { fingerprint: { hash: args.fingerprint } } : {}),
   });
@@ -84,8 +83,10 @@ export function stepReport<C>(
     midiSequence: string;
     registry_matches: RegistryMatch[];
     commercial_deltas: CommercialDelta[];
+    agentkitHeader?: string;
   },
 ): Deferred<ReportResponse> {
+  const headers = args.agentkitHeader ? { Agentkit: args.agentkitHeader } : undefined;
   return backendPost<C, ReportResponse>(
     runtime,
     baseUrl,
@@ -97,5 +98,6 @@ export function stepReport<C>(
       commercial_deltas: args.commercial_deltas,
     },
     85_000,
+    headers,
   );
 }

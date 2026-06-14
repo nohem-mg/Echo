@@ -2,7 +2,7 @@
   "backendBaseUrl": "http://127.0.0.1:8080",
   "useConfidentialHttp": false,
   "secretsOwner": "",
-  "registryAddress": "0xFAe31a6812A6723510219F0c54557318dD89d77f",
+  "registryAddress": "0x0E0f9A9e1D5d5825F7590E04EbBcAdBFB8365148",
   "writeReportGasLimit": "500000",
   "sepoliaRpcUrl": "https://ethereum-sepolia-rpc.publicnode.com",
   "keystoneForwarderAddress": "0x15fc6ae953e024d975e77382eeec56a9101f9f88",

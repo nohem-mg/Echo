@@ -18,7 +18,7 @@ import {
 
 export type Logger = (message: string) => void;
 
-const PREFIX = "Logs |";
+const PREFIX = "MariusAI |";
 
 export type MidiShape = {
   n_notes?: number;
@@ -44,7 +44,7 @@ function logJson(log: Logger, event: string, payload: Record<string, unknown>): 
 function submissionContext(input: PipelineInput, midiSequence: string) {
   return {
     flowId: input.flowId ?? null,
-    trackId: input.trackId,
+    owner: input.owner,
     commitmentHash: input.commitmentHash,
     registryRef: input.registryRef ?? null,
     audioRef: input.audioRef,
@@ -275,7 +275,7 @@ export function logBlockedPipelineSummary(
 ): void {
   logJson(log, "pipeline_blocked_summary", {
     flowId: input.flowId ?? null,
-    trackId: input.trackId,
+    owner: input.owner,
     verdict: args.verdict,
     reason: args.reason ?? null,
     report_for_ai: args.report

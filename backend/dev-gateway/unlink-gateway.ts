@@ -1,34 +1,31 @@
 /**
- * Echo — Unlink SDK bootstrap module.
+ * Echo — Unlink backend auth routes.
  *
- * Initialises the Echo Protocol's custodial Unlink client (server-side pattern:
- * the gateway holds the service account key, not the artist). This module:
+ * Non-custodial model: the ARTIST controls their own Unlink account in the browser
+ * (`@unlink-xyz/sdk/browser`, derived from their wallet) and pays for their own
+ * private on-chain registration. The artist's account is pre-funded for the demo.
  *
- *   1. Registers the Echo Protocol service account on startup (idempotent).
- *   2. Exports `unlinkClient` so Jean can use it to route x402 inter-agent
- *      payments (Steps 2A, 2B, 3, 4) without any additional setup.
- *   3. Provides `registerUnlinkRoutes()` to wire the two auth routes that the
- *      browser SDK expects when an artist's frontend uses Unlink.
+ * The gateway's ONLY Unlink responsibility is the two backend routes the browser SDK
+ * delegates to — guarded by the tenant `apiKey` (a secret that must never reach the
+ * client). It holds no user keys and signs nothing on the artist's behalf.
  *
- * NOTE: Unlink is NOT involved in the SoundCloud upload path. SoundCloud has
- * no upload fee. The gateway proxies the upload directly to soundcloud-service.
+ *   POST /api/unlink/register             → admin.users.register(payload)
+ *   POST /api/unlink/authorization-token  → admin.authorizationTokens.issue(payload)
+ *
+ * The actual private registration (execute([registerTrack]), deposit, ownerKey) happens
+ * CLIENT-SIDE in the frontend with the artist's account — not here.
+ *
+ * Unlink scope: on-chain account privacy only. NOT x402, NOT file/SoundCloud uploads,
+ * NOT audio transit. SoundCloud publishing is the separate soundcloud-service.
  */
 
-import { createUnlinkAdmin, toRegistrationPayload } from "@unlink-xyz/sdk/admin";
-// /client = custodial server pattern (gateway holds the key, not the user).
-// /browser would be for non-custodial frontend apps.
-import { account, createUnlinkClient } from "@unlink-xyz/sdk/client";
+import { createUnlinkAdmin } from "@unlink-xyz/sdk/admin";
 
 const UNLINK_API_KEY = process.env.UNLINK_API_KEY ?? "";
-const UNLINK_MNEMONIC = process.env.UNLINK_MNEMONIC ?? "";
-const UNLINK_ENV = "ethereum-sepolia";
+const UNLINK_ENV = "ethereum-sepolia"; // must match the Registry's chain
 
-if (!UNLINK_API_KEY || !UNLINK_MNEMONIC) {
-  console.warn(
-    "[unlink] UNLINK_API_KEY or UNLINK_MNEMONIC not set — " +
-      "Unlink client will not be functional. " +
-      "Set both env vars to enable x402 inter-agent payments."
-  );
+if (!UNLINK_API_KEY) {
+  console.warn("[unlink] UNLINK_API_KEY not set — Unlink auth routes will not be wired.");
 }
 
 const admin = createUnlinkAdmin({
@@ -36,59 +33,25 @@ const admin = createUnlinkAdmin({
   apiKey: UNLINK_API_KEY,
 });
 
-const unlinkAccount = account.fromMnemonic({ 
-  mnemonic: UNLINK_MNEMONIC || "test test test test test test test test test test test junk" 
-});
-
 /**
- * Echo Protocol service-level Unlink client.
- * Exported for Jean to attach x402 payment logic for pipeline Steps 2A/2B/3/4.
- */
-export const unlinkClient = createUnlinkClient({
-  environment: UNLINK_ENV,
-  account: unlinkAccount,
-  register: (payload) => admin.users.register(payload),
-  authorizationToken: {
-    provider: async () => {
-      const addr = await unlinkAccount.getAddress();
-      return admin.authorizationTokens.issue({ unlinkAddress: addr });
-    },
-  },
-});
-
-// Register the Echo Protocol service account once at startup.
-// Catch errors silently — already registered is not a failure.
-try {
-  const payload = await toRegistrationPayload(unlinkAccount);
-  await admin.users.register(payload);
-  console.log(`[unlink] service account registered: ${payload.address}`);
-} catch {
-  // Already registered — ignore.
-}
-
-/**
- * Wire the two Unlink backend auth routes that the browser SDK expects.
+ * Backend auth routes the browser SDK posts to.
  *
- * These routes are needed if the frontend (Cyriac) uses the Unlink browser
- * SDK to let artists manage their own private Unlink balances. They are NOT
- * required for the SoundCloud upload flow.
- *
- * Call this once during gateway startup, passing the Bun.serve fetch handler
- * context or an equivalent router.
+ * Privacy: do NOT log or persist any link between the artist's EOA and their Unlink
+ * address. These handlers pass the payload straight to Unlink and return the result.
  */
 export function getUnlinkRouteHandlers(): Record<
   string,
   (req: Request) => Promise<Response>
 > {
   return {
-    // POST /api/unlink/register — called by the browser SDK on first use.
+    // Called by the browser SDK on first use (account registration).
     "/api/unlink/register": async (req: Request) => {
       const body = await req.json();
       const result = await admin.users.register(body);
       return Response.json(result);
     },
 
-    // POST /api/unlink/authorization-token — browser SDK requests a short-lived token.
+    // Browser SDK requests a short-lived authorization token.
     "/api/unlink/authorization-token": async (req: Request) => {
       const body = await req.json();
       const result = await admin.authorizationTokens.issue(body);

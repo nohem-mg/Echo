@@ -21,8 +21,7 @@ const INPUT: PipelineInput = {
   audioRef: "https://echo-backend.local/audio/test",
   commitmentHash: "0xabc",
   registryRef: "0xregistryref",
-  worldNullifier: "0xdef",
-  trackId: "0x0000000000000000000000000000000000000000000000000000000000000001",
+  owner: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 };
 
 const deferred = <T>(value: T): Deferred<T> => ({ result: () => value });
@@ -64,7 +63,7 @@ const makeClient = (opts: {
     compareCommercial: () =>
       guard("compareCommercial", { commercial_deltas: opts.commercial ?? [] }),
     report: () => guard("report", opts.report ?? REPORT),
-    register: () => guard("register", { track_id: INPUT.trackId, request_id: "req-test" }),
+    register: () => guard("register", { track_id: "test-uuid-generated", request_id: "req-test" }),
     getAgentAttestations: () => [],
   };
   return { client, calls };
@@ -243,11 +242,11 @@ describe("happy path", () => {
 
 describe("parsePipelineInput", () => {
   test("accepts flat PipelineInput", () => {
-    expect(parsePipelineInput(INPUT).trackId).toBe(INPUT.trackId);
+    expect(parsePipelineInput(INPUT).owner).toBe(INPUT.owner);
   });
 
   test("accepts wrapped { input: PipelineInput }", () => {
-    expect(parsePipelineInput({ input: INPUT }).trackId).toBe(INPUT.trackId);
+    expect(parsePipelineInput({ input: INPUT }).owner).toBe(INPUT.owner);
   });
 });
 
@@ -269,7 +268,7 @@ describe("pipeline events", () => {
   test("CLEAN completion carries report and certificate fields", () => {
     const event = buildPipelineCompletionEvent(INPUT, {
       verdict: "CLEAN",
-      trackId: INPUT.trackId,
+      owner: INPUT.owner,
       commitmentHash: INPUT.commitmentHash,
       registryRef: INPUT.registryRef,
       registryTxHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
@@ -289,7 +288,7 @@ describe("pipeline events", () => {
   test("blocked completion never carries Registry seal fields", () => {
     const event = buildPipelineCompletionEvent(INPUT, {
       verdict: "SIMILAR",
-      trackId: INPUT.trackId,
+      owner: INPUT.owner,
       commitmentHash: INPUT.commitmentHash,
       registryRef: INPUT.registryRef,
       reason: "private registry match 82%",

@@ -8,6 +8,10 @@
 //   Step 3  (after 2A, if matches non-empty) MIDI vs commercial
 //   Step 4  (waits for 2B AND 3) acoustic extraction + final report
 // --------------------------------------------------------------------------
+// Single-pass flow: full DAG runs; iff verdict is CLEAN, dispatchOnChainCallback
+// fires once (writeReport → forwarder → Registry.onReport, which both creates
+// and seals atomically). SIMILAR/REJECTED/ERROR halt off-chain with no on-chain write.
+// --------------------------------------------------------------------------
 // Invariants: strict fail-fast, no partial on-chain state; key/BPM from
 // raw audio; BasicPitch converts, MIDI algo compares (see AGENTS.md).
 // Confidential AI: sensitive agents run via ConfidentialHTTPClient (TEE).
@@ -194,7 +198,7 @@ const halt = (
   agentAttestations?: readonly AgentAttestation[],
 ): PipelineResult => ({
   verdict,
-  trackId: input.trackId,
+  owner: input.owner,
   commitmentHash: input.commitmentHash,
   registryRef: input.registryRef,
   reason,
@@ -206,7 +210,6 @@ const finalizeResult = (
   runtime: Runtime<Config>,
   client: PipelineClient,
   result: PipelineResult,
-  options: { dispatchOnChain?: boolean } = {},
 ): PipelineResult => {
   // ERROR = infrastructure failure; no on-chain state written.
   if (result.verdict === "ERROR") return result;
@@ -230,11 +233,10 @@ const finalizeResult = (
     return { ...withAgents, attestation };
   }
 
-  // On-chain write only after wallet registerTrack (seal phase), not during analysis.
+  // Single-pass: CLEAN → dispatch on-chain immediately (no second trigger needed).
   const registry = runtime.config.registryAddress?.toLowerCase();
   let registryTxHash: string | undefined;
   if (
-    options.dispatchOnChain === true &&
     registry &&
     registry !== "0x0000000000000000000000000000000000000000"
   ) {
@@ -272,7 +274,7 @@ export const runPipelineWithClient = (
   try {
     const updateStep = (stepKey: string, event: Omit<Parameters<PipelineEventSink["updateStep"]>[1], "stepKey">) =>
       events.updateStep(input, { stepKey, ...event });
-    log(`Input — trackId=${input.trackId}  audioRef=${input.audioRef}`);
+    log(`Input — owner=${input.owner}  audioRef=${input.audioRef}`);
 
     // ---- Step 1 — audio -> MIDI conversion (prerequisite for 2A and 2B) --
     log("Step 1 — audio -> MIDI conversion (BasicPitch)");
@@ -438,6 +440,7 @@ export const runPipelineWithClient = (
           midiSequence,
           registry_matches: registryMatches,
           commercial_deltas: commercialDeltas,
+          agentkitHeader: input.agentkitHeader,
         })
         .result(),
       coverMatches,
@@ -457,9 +460,8 @@ export const runPipelineWithClient = (
 
     // SEAL — persist in private registry before on-chain callback (CLEAN only).
     if (report.verdict === "CLEAN" && report.submitted_track) {
-      log(`SEAL — POST /api/registry  trackId=${input.trackId}  fingerprint=${report.submitted_track.fingerprint}`);
+      log(`SEAL — POST /api/registry  commitment=${input.commitmentHash.slice(0, 10)}…  fingerprint=${report.submitted_track.fingerprint}`);
       client.register({
-        trackId: input.trackId,
         midiSequence,
         fingerprint: report.submitted_track.fingerprint,
       }).result();
@@ -468,7 +470,7 @@ export const runPipelineWithClient = (
 
     return {
       verdict: report.verdict,
-      trackId: input.trackId,
+      owner: input.owner,
       commitmentHash: input.commitmentHash,
       registryRef: input.registryRef,
       report,
@@ -494,7 +496,8 @@ export const runPipeline = (runtime: Runtime<Config>, input: PipelineInput): Pip
 
   let finalized: PipelineResult;
   try {
-    finalized = finalizeResult(runtime, client, result, { dispatchOnChain: false });
+    // Single-pass: always dispatch on-chain for CLEAN (no second trigger needed).
+    finalized = finalizeResult(runtime, client, result);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     runtime.log(`STOP — finalization failed: ${reason}`);
@@ -512,49 +515,24 @@ export const runPipeline = (runtime: Runtime<Config>, input: PipelineInput): Pip
   return finalized;
 };
 
-// Second-phase on-chain seal: wallet registerTrack must exist before onReport.
-export const runOnChainSeal = (runtime: Runtime<Config>, input: PipelineInput): PipelineResult => {
-  if (input.mode !== "seal") {
-    return halt(input, "ERROR", "seal mode required for on-chain callback");
-  }
-
-  runtime.log(`Echo — on-chain seal trackId=${input.trackId.slice(0, 10)}…`);
-
-  const client = createBackendClient(runtime, runtime.config.backendBaseUrl, {
-    useConfidentialHttp: runtime.config.useConfidentialHttp,
-    secretsOwner: runtime.config.secretsOwner,
-  });
-
-  const result: PipelineResult = {
-    verdict: "CLEAN",
-    trackId: input.trackId,
-    commitmentHash: input.commitmentHash,
-    registryRef: input.registryRef,
-  };
-
-  let finalized: PipelineResult;
-  try {
-    finalized = finalizeResult(runtime, client, result, { dispatchOnChain: true });
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    runtime.log(`STOP — seal finalization failed: ${reason}`);
-    finalized = halt(input, "ERROR", `seal finalization failed: ${reason}`, client.getAgentAttestations());
-  }
-
-  notifyPipelineCompletion(runtime, runtime.config, input, finalized);
-  return finalized;
-};
-
 // --------------------------------------------------------------------------
 // HTTP trigger: pipeline entry point (track submission)
 // --------------------------------------------------------------------------
 const onSubmission = (runtime: Runtime<Config>, payload: HTTPPayload): PipelineResult => {
   const input = parsePipelineInput(JSON.parse(new TextDecoder().decode(payload.input)));
-  if (input.mode === "seal") {
-    return runOnChainSeal(runtime, input);
+
+  // Guard: owner is required — the frontend must supply the artist's ephemeral owner-key address.
+  if (!input.owner || typeof input.owner !== "string") {
+    runtime.log("STOP — missing required field: owner (artist ephemeral owner-key address). Add \"owner\": \"0x…\" to the submission payload.");
+    return {
+      verdict: "ERROR",
+      owner: "0x0000000000000000000000000000000000000000",
+      commitmentHash: input.commitmentHash ?? "0x",
+      reason: "missing required field: owner",
+    };
   }
 
-  runtime.log(`Echo — new submission (commitment ${input.commitmentHash.slice(0, 10)}…)`);
+  runtime.log(`Echo — new submission (owner ${input.owner.slice(0, 10)}…  commitment ${input.commitmentHash.slice(0, 10)}…)`);
   if (runtime.config.useConfidentialHttp) {
     runtime.log("Confidential AI — sensitive agents routed via ConfidentialHTTPClient");
   }

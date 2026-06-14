@@ -44,6 +44,7 @@ export type ReportArgs = {
   midiSequence: string;
   registry_matches: RegistryMatch[];
   commercial_deltas: CommercialDelta[];
+  agentkitHeader?: string;
 };
 
 // One method per backend endpoint; all deferred for parallel scheduling.
@@ -54,7 +55,6 @@ export type PipelineClient = {
   compareCommercial(midiSequence: string, ISRCs: string[]): Deferred<CompareCommercialResponse>;
   report(args: ReportArgs): Deferred<ReportResponse>;
   register(args: {
-    trackId: string;
     midiSequence: string;
     fingerprint?: string;
   }): Deferred<RegisterResponse>;

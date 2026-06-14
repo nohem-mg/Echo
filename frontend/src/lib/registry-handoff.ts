@@ -9,6 +9,25 @@ export function toRegistryBytes32(value: string): `0x${string}` {
   return `0x${createHash("sha256").update(value).digest("hex")}`;
 }
 
+/**
+ * Derives a deterministic, unlinkable 20-byte EVM owner-key address from the
+ * artist's real wallet address (or nullifier hash as fallback).
+ *
+ * Domain: "echo-owner-key-v1:" prevents cross-context hash collisions.
+ *
+ * NOTE: In production the browser derives the owner key by signing a fixed
+ * message with the real wallet (Unlink flow). This server-side path is used
+ * during simulation / dev when no browser signing is available.
+ */
+export function deriveOwnerKey(walletAddress: string | undefined, nullifierHash: string): `0x${string}` {
+  const seed = walletAddress
+    ? `echo-owner-key-v1:${walletAddress.toLowerCase()}`
+    : `echo-owner-key-v1:nullifier:${nullifierHash}`;
+  const hash = createHash("sha256").update(seed).digest("hex");
+  // Take the last 20 bytes (40 hex chars) to form the address.
+  return `0x${hash.slice(-40)}`;
+}
+
 export function buildFlowCommitmentHash(_flowId: string, trackFingerprint: string): `0x${string}` {
   return toRegistryBytes32(`commitment:${trackFingerprint}`);
 }
