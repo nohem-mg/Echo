@@ -1,7 +1,7 @@
 // ==========================================================================
-// Echo — Structured CRE logs for Marius report-service / AI enrichment
+// Echo — Structured CRE logs for pipeline monitoring / AI enrichment
 // --------------------------------------------------------------------------
-// Emits grep-friendly JSON lines prefixed with "MariusAI |". Never logs raw
+// Emits grep-friendly JSON lines prefixed with "Logs |". Never logs raw
 // audio bytes, full MIDI sequences, or unreleased acoustic fingerprints.
 // ==========================================================================
 
@@ -17,7 +17,7 @@ import {
 
 export type Logger = (message: string) => void;
 
-const PREFIX = "MariusAI |";
+const PREFIX = "Logs |";
 
 export type MidiShape = {
   n_notes?: number;

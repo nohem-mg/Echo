@@ -259,11 +259,11 @@ export const runPipelineWithClient = (
     const matches = checkPublic.matches;
     const coverMatches = checkPublic.cover_matches ?? [];
     const registryMatches = handle2b.result().registry_matches;
-    log(`Step 2A OK — ACRCloud matches (≥50%): ${formatMatches2a(matches)}`);
+    const coverSuffix = coverMatches.length > 0
+      ? ` · humming/cover: ${coverMatches.map((m) => `${m.ISRC ?? "?"}@${m.confidence_score}%`).join(", ")}`
+      : " · humming: none";
+    log(`Step 2A OK — ACRCloud matches (≥50%): ${formatMatches2a(matches)}${coverSuffix}`);
     log(`Step 2B OK — registry matches: ${formatMatches2b(registryMatches)}`);
-    if (coverMatches.length > 0) {
-      log(`Step 2A cover — ${coverMatches.length} humming/cover candidate(s)`);
-    }
     logStep2ComparisonSnapshot(log, input, midiSequence, {
       acrMatches: matches,
       coverMatches,
