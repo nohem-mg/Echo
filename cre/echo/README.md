@@ -134,6 +134,19 @@ If `pipelineEventsUrl` and `pipelineEventsSecret` are configured, CRE also sends
 
 For local frontend-driven runs, set frontend `CRE_TRIGGER_URL=http://localhost:2000/trigger`. That URL is the CRE simulator trigger, not the deployed frontend URL. If the frontend runs on Vercel, it cannot call a simulator on your laptop unless you expose the simulator through a tunnel.
 
+### Marius AI logs (plagiarism / similarity)
+
+On Step 2 fail-fast (`REJECTED` ≥95% ACRCloud, `SIMILAR` ≥75% registry MIDI), the CRE emits grep-friendly JSON lines:
+
+```text
+MariusAI | step2_snapshot {...}
+MariusAI | fail_fast_rejected {...}   # plagiarism
+MariusAI | fail_fast_similar {...}    # private registry similarity
+MariusAI | pipeline_blocked_summary {...}
+```
+
+Filter simulator output with `grep 'MariusAI |'`. Payloads include ranked matches, thresholds, `report_for_ai`, and safe MIDI stats (`n_notes`, `duration_s`) — never raw audio or MIDI note data.
+
 ---
 
 ## 5. Run unit tests
