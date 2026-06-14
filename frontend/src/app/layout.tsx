@@ -30,8 +30,8 @@ const permanentMarker = Permanent_Marker({
 });
 
 export const metadata: Metadata = {
-  title: "Echo | Private music prior-art",
-  description: "A confidential prior-art registry for unreleased music.",
+  title: "Echo | Seal the track before the world hears it",
+  description: "Echo enables securing music via decentralized copyright registries, ZK identity and AI audio analysis",
 };
 
 export default function RootLayout({
