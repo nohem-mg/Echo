@@ -41,37 +41,36 @@
 ### contracts/ — Foundry / Solidity
 
 - Run `forge build && forge test -v` after every change. Do not propose code that does not compile.
-- The Status enum values are fixed — never change them: `SEALED=0, REVEALED=1, SIMILAR=2, REJECTED=3`.
-- `onlyCRE` must protect `receiveCRECallback` at all times. Never remove or weaken this modifier.
-- World ID proof is validated off-chain by the backend. The contract stores the nullifier only for anti-Sybil. Do not reintroduce on-chain ZK proof verification.
+- Status enum: `SEALED=0, REVEALED=1`. There is deliberately no on-chain status for SIMILAR/REJECTED — the CRE halts those off-chain and never writes, so an entry existing at all proves it passed CLEAN.
+- `onReport` is the SOLE state-creating entry point and must keep `require(msg.sender == creAddress)` (the Keystone forwarder) at all times. There is no permissionless `registerTrack`: "registered on-chain" == "passed the CRE pipeline" (requirement #1, structural). `onReport` creates AND seals the entry atomically.
+- Ownership is an ephemeral `owner` key address carried in the report — never the artist's real wallet and never `msg.sender`. The artist proves ownership later by signing (see `revealTrack`). Do not reintroduce `msg.sender`-based ownership.
+- World ID humanity is enforced UPSTREAM at the agent gate (AgentKit), off-chain. The nullifier is NOT stored on-chain for now (same per human → would correlate an artist's tracks). This is a deferred choice, not a ban — it may be added later (e.g. alongside the AgentKit human-check) if a use case needs on-chain anti-Sybil.
 - If you change the ABI, immediately flag it to `frontend/` (Cyriac) and `cre/` (Nohem) — they depend on it.
 - `creAddress` is currently set to the deployer as a placeholder. Do not treat it as final.
 
 ### cre/ — Chainlink CRE SDK / TypeScript
 
-- You are the only module authorized to call `receiveCRECallback` on the Registry.
+- You are the only module that writes to the Registry, via `EVMClient.writeReport` → Keystone forwarder → `Registry.onReport`. This is the single on-chain write for a track (it both creates and seals).
 - Always call the backend endpoints in this exact order and parallelism: Step 1 → (2A ∥ 2B) → Step 3 (after 2A) → Step 4 (after 2B + 3).
 - If any step returns an HTTP error or timeout, halt the workflow immediately. Do not call the next step.
 - Apply fail-fast thresholds before calling the next step: 2A ≥95 % → REJECTED, 2B ≥75 % → SIMILAR.
-- Never write on-chain if verdict is SIMILAR or REJECTED.
-- The callback signature is: `receiveCRECallback(bytes32 trackId, uint8 verdict, bytes rawReport)`.
+- Never write on-chain if verdict is SIMILAR or REJECTED — those halt off-chain and produce no transaction. Only CLEAN reaches `onReport`.
+- The report payload is `abi.encode(address owner, bytes32 commitmentHash, bytes32 registryRef)`. No verdict byte (reaching the chain already means CLEAN); no nullifier. `owner` is the artist's ephemeral owner-key address, supplied by the frontend in `PipelineInput`.
 
 ### frontend/ — Next.js / wagmi
 
 - Connect to the Registry using the ABI at `contracts/out/Registry.sol/Registry.json`.
-- Do not call `registerTrack` before the backend has validated the World ID proof.
-- Always store the `trackId` returned by `registerTrack` — it is required for the certificate and reveal flow.
-- `registerTrack` signature: `(uint256 nullifier, bytes32 commitmentHash, address ownerKey, bytes32 registryRef)`. Ownership is the `ownerKey` parameter, never `msg.sender`.
-- `registerTrack` / `revealTrack` are routed through Unlink `execute()`, so the contract sees a pooled, anonymous `ExecutionAccount` as `msg.sender` (the artist's wallet never appears on-chain). Identity therefore comes from `ownerKey`, not the caller.
-- `revealTrack` is authorized by an ECDSA signature recovered against `trackOwner[trackId]` (the `ownerKey`), not by `msg.sender`.
-- Unlink scope: on-chain account privacy only (unlinkable register + private license settlement). It does NOT do x402, file/SoundCloud uploads, or audio transit — SoundCloud publishing is the separate `soundcloud-service`.
+- The frontend does NOT write the track on-chain. There is no `registerTrack`. The track is created+sealed only by the CRE's `onReport` after a CLEAN verdict. The frontend's job is to (a) derive/manage the ephemeral `owner` key, (b) pass `owner` into `PipelineInput` so the CRE can put it in the report, and (c) compute `trackId = keccak256(abi.encode(owner, commitmentHash))` locally for display/lookup during analysis (it exists on-chain only once sealed).
+- The `owner` key is ephemeral and unlinkable to the artist's real wallet — ideally derived deterministically (sign a fixed message with the wallet / use the Unlink account) so the artist can re-derive it without storing it, while the address stays uncorrelated.
+- `revealTrack(bytes32 trackId, bytes32 fullProfileHash, bytes ownerSig)` is authorized by an EIP-191 signature from the `owner` key over `keccak256(abi.encode(trackId, fullProfileHash))`, NOT by `msg.sender`. Any account (or an Unlink relay) may submit the tx.
+- Unlink scope: on-chain account privacy only. With the CRE as sole writer the seal is already private (the DON writes it; only the ephemeral `owner` appears). Unlink's role is the money trail — funding the owner key and private license settlement. It does NOT do x402, file/SoundCloud uploads, or audio transit — SoundCloud publishing is the separate `soundcloud-service`.
 
 ### backend/ — Express / Next.js / Python
 
 - Store private registry tracks and melodic intervals in PostgreSQL (`registry-db` service) instead of Walrus.
-- `registryRef` passed to `registerTrack` must be `keccak256(track_id)`.
+- `registryRef` carried in the CRE report must be `keccak256(track_id)`.
 - Database access: Schema is managed by the database container itself; applications perform data access only. Direct database access is restricted to the similarity service API (`POST /api/registry` and `POST /api/compare/private`); the CRE does not connect to the database.
-- `commitmentHash` must be computed as `keccak256(abi.encodePacked(fingerprint, profileJSON))` before calling `registerTrack`.
+- `commitmentHash` must be computed as `keccak256(abi.encodePacked(fingerprint, profileJSON))` and carried into the pipeline so the CRE seals it on-chain.
 - World ID proof validation: call `POST /api/v4/verify/{rp_id}` on the Developer Portal before passing the nullifier to the frontend.
 - Never return confidence scores below 50 % from `/api/check/public` — filter them out before responding.
 
@@ -92,17 +91,21 @@
 ### CRE → Contract
 
 ```
-receiveCRECallback(bytes32 trackId, uint8 verdict, bytes rawReport)
+Registry.onReport(bytes metadata, bytes rawReport)   // delivered by the Keystone forwarder
 
-verdict: 0=CLEAN/SEALED | 2=SIMILAR | 3=REJECTED
+rawReport = abi.encode(address owner, bytes32 commitmentHash, bytes32 registryRef)
+trackId   = keccak256(abi.encode(owner, commitmentHash))   // derived on-chain
+// CLEAN only — SIMILAR/REJECTED never reach the chain
 ```
 
 ### Frontend → Contract
 
 ```
-registerTrack(uint256 nullifier, bytes32 commitmentHash, bytes32 registryRef) → bytes32 trackId
-
-revealTrack(bytes32 trackId, bytes32 fullProfileHash)
+// No write path. The frontend never creates the entry — the CRE's onReport does.
+// Read:   getEntry(bytes32 trackId) → Entry{ commitmentHash, timestamp, status, registryRef, owner }
+//         getOwnerTracks(address owner) → bytes32[]
+// Reveal: revealTrack(bytes32 trackId, bytes32 fullProfileHash, bytes ownerSig)
+//         ownerSig = EIP-191 signature by `owner` over keccak256(abi.encode(trackId, fullProfileHash))
 ```
 
 ---
