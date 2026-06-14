@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { IDKit, orbLegacy, type IDKitResult } from "@worldcoin/idkit-core";
 import Image from "next/image";
@@ -8,7 +8,9 @@ import QRCode from "qrcode";
 import {
   ArrowUpRight,
   Check,
+  ChevronDown,
   CircleDot,
+  Clock,
   Copy,
   Disc3,
   ExternalLink,
@@ -25,10 +27,11 @@ import {
   Waves,
   X,
 } from "lucide-react";
-import { isAddress, parseEther, toHex, type Abi } from "viem";
-import { useAccount, useChainId, usePublicClient, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { toHex, type Abi } from "viem";
+import { useAccount, useChainId, usePublicClient, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
+import { useFlowHistory } from "@/lib/use-flow-history";
 import {
   buildFlowCommitmentHash,
   buildFlowRegistryRef,
@@ -57,6 +60,19 @@ type WorldQrState = {
   connectorURI: string;
   imageDataUrl: string;
 };
+
+type SoundCloudPublishResponse = {
+  soundcloud_url: string;
+  track_id: number;
+  permalink: string;
+  request_id: string;
+};
+
+type SoundCloudPublishState =
+  | { status: "idle" }
+  | { status: "publishing" }
+  | { status: "published"; response: SoundCloudPublishResponse }
+  | { status: "error"; error: string };
 
 type ReportTableMatch = EchoSimilarTrack & {
   keyLabel: string;
@@ -363,6 +379,56 @@ function toBytes32Hex(value: string) {
   return hexValue.padEnd(66, "0").slice(0, 66) as `0x${string}`;
 }
 
+function stripAudioExtension(fileName: string) {
+  return fileName.replace(/\.[^.]+$/, "") || "Echo sealed track";
+}
+
+function requestSoundCloudToken(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    fetch("/api/soundcloud/oauth/start")
+      .then((r) => r.json() as Promise<{ auth_url: string; error?: string }>)
+      .then(({ auth_url, error }) => {
+        if (error || !auth_url) {
+          reject(new Error(error ?? "Failed to get SoundCloud auth URL"));
+          return;
+        }
+
+        const popup = window.open(auth_url, "soundcloud_oauth", "width=600,height=700,noopener=0");
+        if (!popup) {
+          reject(new Error("Popup blocked — please allow popups for this site"));
+          return;
+        }
+
+        const onMessage = (event: MessageEvent) => {
+          if (event.origin !== window.location.origin) return;
+          const data = event.data as { type?: string; access_token?: string; error?: string };
+          if (data.type === "soundcloud_auth_success") {
+            cleanup();
+            resolve(data.access_token ?? "");
+          } else if (data.type === "soundcloud_auth_error") {
+            cleanup();
+            reject(new Error(data.error ?? "SoundCloud authorization failed"));
+          }
+        };
+
+        const checkClosed = setInterval(() => {
+          if (popup.closed) {
+            cleanup();
+            reject(new Error("SoundCloud authorization was cancelled"));
+          }
+        }, 800);
+
+        function cleanup() {
+          clearInterval(checkClosed);
+          window.removeEventListener("message", onMessage);
+        }
+
+        window.addEventListener("message", onMessage);
+      })
+      .catch(reject);
+  });
+}
+
 export default function Home() {
   const [audioName, setAudioName] = useState("");
   const [trackFingerprint, setTrackFingerprint] = useState("");
@@ -380,21 +446,23 @@ export default function Home() {
   const [isStartingPipeline, setIsStartingPipeline] = useState(false);
   const [creDisabled, setCreDisabled] = useState(false);
   const [isSealingOnChain, setIsSealingOnChain] = useState(false);
+  const [soundCloudTitle, setSoundCloudTitle] = useState("");
+  const [soundCloudPublish, setSoundCloudPublish] = useState<SoundCloudPublishState>({ status: "idle" });
+  const [historyOpen, setHistoryOpen] = useState(false);
   const sealAttemptedRef = useRef<string | null>(null);
   const sealInFlightRef = useRef<string | null>(null);
   const { writeContractAsync: writeRegistryContract, isPending: isWritingRegistry } = useWriteContract();
   const { address, isConnected } = useAccount();
+  const { entries: historyEntries, addOrUpdate: addOrUpdateHistory } = useFlowHistory(address);
   const chainId = useChainId();
   const publicClient = usePublicClient({ chainId: sepolia.id });
-  const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
-  const { sendTransactionAsync, isPending: isSendingTransaction } = useSendTransaction();
+  const { switchChain } = useSwitchChain();
 
   const pendingPaymentHash = payment.status === "pending" ? payment.hash : undefined;
   const pendingPaymentReference = payment.status === "pending" ? payment.reference : undefined;
   const {
     data: paymentReceipt,
     error: paymentReceiptError,
-    isLoading: isConfirmingTransaction,
   } = useWaitForTransactionReceipt({
     hash: pendingPaymentHash,
     chainId: sepolia.id,
@@ -423,8 +491,15 @@ export default function Home() {
   const reportMatches = useMemo(() => normalizeReportMatches(activeReport), [activeReport]);
   const bestReportMatch = getBestMatch(activeReport);
   const hasRegistrySeal = Boolean(flow?.status === "pipeline_completed" && flow.registryTxHash);
+  const isCleanAndSealed = Boolean(hasRegistrySeal && activeReport?.verdict === "CLEAN");
   const certificateTrackId = flow?.registryTrackId;
   const certificateTxHash = flow?.registryTxHash;
+  const canPublishToSoundCloud = Boolean(
+    isCleanAndSealed &&
+    flow?.id &&
+    (soundCloudTitle.trim() || audioName) &&
+    soundCloudPublish.status !== "publishing",
+  );
   const flowStatus = useMemo(() => {
     if (pipelineProgressStatus) {
       return pipelineProgressStatus;
@@ -653,6 +728,154 @@ export default function Home() {
     };
   }, [creDisabled, pipelineStarted, flow?.id]);
 
+  const ensureRegistryWalletReady = useCallback(async () => {
+    if (!echoConfig.registryAddress) {
+      return;
+    }
+
+    if (!isConnected || !address) {
+      throw new Error("Connect your wallet on Sepolia before starting analysis.");
+    }
+
+    if (chainId !== echoConfig.registryChainId) {
+      await switchChain({ chainId: sepolia.id });
+    }
+  }, [address, chainId, isConnected, switchChain]);
+
+  const persistRegistryRegistration = useCallback(
+    async (
+      flowId: string,
+      registryTrackId: `0x${string}`,
+      commitmentHash: `0x${string}`,
+      registryRef: `0x${string}`,
+    ) => {
+      const persistResponse = await fetch("/api/registry/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          flowId,
+          registryTrackId,
+          commitmentHash,
+          registryRef,
+        }),
+      });
+
+      if (!persistResponse.ok) {
+        const errorBody = await readApiErrorBody(persistResponse);
+        throw new Error(formatApiError(errorBody, `Failed to persist Registry track ID (HTTP ${persistResponse.status})`));
+      }
+
+      const persisted = (await persistResponse.json()) as { flow?: EchoFlow };
+      if (!persisted.flow) {
+        throw new Error("Registry registration persisted without returning the updated flow.");
+      }
+
+      return persisted.flow;
+    },
+    [],
+  );
+
+  const registerTrackOnChain = useCallback(
+    async (currentFlow: EchoFlow, uploadTrackId: string) => {
+      if (!echoConfig.registryAddress) {
+        return currentFlow;
+      }
+
+      if (!publicClient) {
+        throw new Error("Sepolia RPC client is not ready yet. Retry in a few seconds.");
+      }
+
+      const registryAddress = echoConfig.registryAddress as `0x${string}`;
+      const commitmentHash = buildFlowCommitmentHash(currentFlow.id, currentFlow.trackFingerprint);
+      const registryRef = buildFlowRegistryRef(uploadTrackId);
+
+      if (currentFlow.registryTrackId) {
+        const alreadyRegistered = await isTrackRegisteredOnChain(
+          publicClient,
+          registryAddress,
+          currentFlow.registryTrackId,
+        );
+        if (alreadyRegistered) {
+          const entry = (await publicClient.readContract({
+            address: registryAddress,
+            abi: registryContractAbi,
+            functionName: "getEntry",
+            args: [currentFlow.registryTrackId],
+          })) as { commitmentHash?: `0x${string}` };
+
+          if (entry.commitmentHash?.toLowerCase() === commitmentHash.toLowerCase()) {
+            return currentFlow;
+          }
+        }
+      }
+
+      await ensureRegistryWalletReady();
+
+      if (!address) {
+        throw new Error("Connect your wallet on Sepolia before starting analysis.");
+      }
+
+      const nullifier = worldNullifierToBigInt(currentFlow.nullifierHash);
+
+      const recoveredTrackId = await findRegistryTrackIdByCommitment(
+        publicClient,
+        registryAddress,
+        address,
+        commitmentHash,
+      );
+      if (recoveredTrackId) {
+        setPipelineProgressStatus("Linking existing on-chain Registry entry...");
+        return persistRegistryRegistration(currentFlow.id, recoveredTrackId, commitmentHash, registryRef);
+      }
+
+      setPipelineProgressStatus("Registering track on Ethereum Sepolia...");
+
+      try {
+        const registerTxHash = await writeRegistryContract({
+          address: registryAddress,
+          abi: registryContractAbi,
+          functionName: "registerTrack",
+          args: [nullifier, commitmentHash, registryRef],
+          chain: sepolia,
+        });
+
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: registerTxHash });
+        if (receipt.status !== "success") {
+          throw new Error(
+            "registerTrack a échoué sur Sepolia. Vérifiez votre wallet et le réseau Sepolia.",
+          );
+        }
+
+        const registryTrackId = parseTrackRegisteredTrackId(receipt.logs, registryAddress);
+        if (!registryTrackId) {
+          throw new Error("registerTrack succeeded but TrackRegistered event was not found.");
+        }
+
+        return persistRegistryRegistration(currentFlow.id, registryTrackId, commitmentHash, registryRef);
+      } catch (error) {
+        const retryTrackId = await findRegistryTrackIdByCommitment(
+          publicClient,
+          registryAddress,
+          address,
+          commitmentHash,
+        );
+        if (retryTrackId) {
+          setPipelineProgressStatus("Recovering on-chain Registry track ID...");
+          return persistRegistryRegistration(currentFlow.id, retryTrackId, commitmentHash, registryRef);
+        }
+
+        throw error;
+      }
+    },
+    [
+      address,
+      ensureRegistryWalletReady,
+      persistRegistryRegistration,
+      publicClient,
+      writeRegistryContract,
+    ],
+  );
+
   // After CLEAN analysis: registerTrack (wallet) then CRE onReport seal.
   useEffect(() => {
     if (!flow?.id || flow.status !== "pipeline_completed") {
@@ -743,11 +966,8 @@ export default function Home() {
     })();
   }, [
     creDisabled,
-    flow?.id,
-    flow?.registryTrackId,
-    flow?.registryTxHash,
-    flow?.report?.verdict,
-    flow?.status,
+    flow,
+    registerTrackOnChain,
   ]);
 
   // Local simulation fallback when the CRE trigger is disabled.
@@ -873,6 +1093,27 @@ export default function Home() {
     };
   }, [pipelineStarted, flow, livePipelineSteps, audioName, trackFingerprint, creDisabled]);
 
+  useEffect(() => {
+    if (flow && address) addOrUpdateHistory(flow);
+  }, [flow, address, addOrUpdateHistory]);
+
+  async function restoreFlow(flowId: string) {
+    try {
+      const res = await fetch(`/api/flows/${flowId}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { flow: import("@/lib/types").EchoFlow; pipeline: import("@/lib/types").EchoPipelineStep[] };
+      setFlow(data.flow);
+      setAudioName(data.flow.trackName);
+      setSoundCloudTitle(stripAudioExtension(data.flow.trackName));
+      setLivePipelineSteps(data.pipeline ?? []);
+      setPipelineStarted(true);
+      setVerification({ status: "idle" });
+      setPayment({ status: "idle" });
+      setPendingQuote(null);
+      setHistoryOpen(false);
+    } catch {}
+  }
+
   async function handleAudioFile(file: File) {
     setAudioFile(file);
     setAudioName(file.name);
@@ -886,6 +1127,8 @@ export default function Home() {
     setPipelineProgressStatus("");
     setIsStartingPipeline(false);
     setCreDisabled(false);
+    setSoundCloudTitle(stripAudioExtension(file.name));
+    setSoundCloudPublish({ status: "idle" });
 
     try {
       setTrackFingerprint(await createAudioFingerprint(file));
@@ -1155,142 +1398,6 @@ export default function Home() {
     await startPipelineForFlow(flow.id, audioFile);
   }
 
-  async function ensureRegistryWalletReady() {
-    if (!echoConfig.registryAddress) {
-      return;
-    }
-
-    if (!isConnected || !address) {
-      throw new Error("Connect your wallet on Sepolia before starting analysis.");
-    }
-
-    if (chainId !== echoConfig.registryChainId) {
-      await switchChain({ chainId: sepolia.id });
-    }
-  }
-
-  async function persistRegistryRegistration(
-    flowId: string,
-    registryTrackId: `0x${string}`,
-    commitmentHash: `0x${string}`,
-    registryRef: `0x${string}`,
-  ) {
-    const persistResponse = await fetch("/api/registry/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        flowId,
-        registryTrackId,
-        commitmentHash,
-        registryRef,
-      }),
-    });
-
-    if (!persistResponse.ok) {
-      const errorBody = await readApiErrorBody(persistResponse);
-      throw new Error(formatApiError(errorBody, `Failed to persist Registry track ID (HTTP ${persistResponse.status})`));
-    }
-
-    const persisted = (await persistResponse.json()) as { flow?: EchoFlow };
-    if (!persisted.flow) {
-      throw new Error("Registry registration persisted without returning the updated flow.");
-    }
-
-    return persisted.flow;
-  }
-
-  async function registerTrackOnChain(currentFlow: EchoFlow, uploadTrackId: string) {
-    if (!echoConfig.registryAddress) {
-      return currentFlow;
-    }
-
-    if (!publicClient) {
-      throw new Error("Sepolia RPC client is not ready yet. Retry in a few seconds.");
-    }
-
-    const registryAddress = echoConfig.registryAddress as `0x${string}`;
-    const commitmentHash = buildFlowCommitmentHash(currentFlow.id, currentFlow.trackFingerprint);
-    const registryRef = buildFlowRegistryRef(uploadTrackId);
-
-    if (currentFlow.registryTrackId) {
-      const alreadyRegistered = await isTrackRegisteredOnChain(
-        publicClient,
-        registryAddress,
-        currentFlow.registryTrackId,
-      );
-      if (alreadyRegistered) {
-        const entry = (await publicClient.readContract({
-          address: registryAddress,
-          abi: registryContractAbi,
-          functionName: "getEntry",
-          args: [currentFlow.registryTrackId],
-        })) as { commitmentHash?: `0x${string}` };
-
-        if (entry.commitmentHash?.toLowerCase() === commitmentHash.toLowerCase()) {
-          return currentFlow;
-        }
-      }
-    }
-
-    await ensureRegistryWalletReady();
-
-    if (!address) {
-      throw new Error("Connect your wallet on Sepolia before starting analysis.");
-    }
-
-    const nullifier = worldNullifierToBigInt(currentFlow.nullifierHash);
-
-    const recoveredTrackId = await findRegistryTrackIdByCommitment(
-      publicClient,
-      registryAddress,
-      address,
-      commitmentHash,
-    );
-    if (recoveredTrackId) {
-      setPipelineProgressStatus("Linking existing on-chain Registry entry...");
-      return persistRegistryRegistration(currentFlow.id, recoveredTrackId, commitmentHash, registryRef);
-    }
-
-    setPipelineProgressStatus("Registering track on Ethereum Sepolia...");
-
-    try {
-      const registerTxHash = await writeRegistryContract({
-        address: registryAddress,
-        abi: registryContractAbi,
-        functionName: "registerTrack",
-        args: [nullifier, commitmentHash, registryRef],
-        chain: sepolia,
-      });
-
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: registerTxHash });
-      if (receipt.status !== "success") {
-        throw new Error(
-          "registerTrack a échoué sur Sepolia. Vérifiez votre wallet et le réseau Sepolia.",
-        );
-      }
-
-      const registryTrackId = parseTrackRegisteredTrackId(receipt.logs, registryAddress);
-      if (!registryTrackId) {
-        throw new Error("registerTrack succeeded but TrackRegistered event was not found.");
-      }
-
-      return persistRegistryRegistration(currentFlow.id, registryTrackId, commitmentHash, registryRef);
-    } catch (error) {
-      const retryTrackId = await findRegistryTrackIdByCommitment(
-        publicClient,
-        registryAddress,
-        address,
-        commitmentHash,
-      );
-      if (retryTrackId) {
-        setPipelineProgressStatus("Recovering on-chain Registry track ID...");
-        return persistRegistryRegistration(currentFlow.id, retryTrackId, commitmentHash, registryRef);
-      }
-
-      throw error;
-    }
-  }
-
   async function startPipelineForFlow(flowId: string, file: File) {
     try {
       setIsStartingPipeline(true);
@@ -1315,7 +1422,7 @@ export default function Home() {
 
       const uploadData = (await uploadResponse.json()) as TrackUploadResponse;
       console.log("[Echo] Upload success, track:", uploadData.track?.id, "flow status:", uploadData.flow?.status);
-      let activeFlow = uploadData.flow;
+      const activeFlow = uploadData.flow;
       setFlow(activeFlow);
       setLivePipelineSteps(uploadData.pipeline);
       setPipelineProgressStatus("Starting CRE handoff...");
@@ -1400,6 +1507,51 @@ export default function Home() {
     } catch (error) {
       console.error("On-chain reveal failed:", error);
       setPipelineProgressStatus(`On-chain reveal failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async function handlePublishToSoundCloud() {
+    if (!flow?.id || !isCleanAndSealed) {
+      setSoundCloudPublish({ status: "error", error: "SoundCloud publish opens after a CLEAN Registry seal." });
+      return;
+    }
+
+    const title = soundCloudTitle.trim() || stripAudioExtension(audioName);
+
+    if (!title) {
+      setSoundCloudPublish({ status: "error", error: "Set a title before publishing." });
+      return;
+    }
+
+    setSoundCloudPublish({ status: "publishing" });
+
+    try {
+      const accessToken = await requestSoundCloudToken();
+
+      const response = await fetch("/api/soundcloud/upload", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          flowId: flow.id,
+          title,
+          description: "",
+          privacy: "private",
+          accessToken,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await readApiErrorBody(response);
+        throw new Error(formatApiError(errorBody, `SoundCloud publish failed (HTTP ${response.status})`));
+      }
+
+      const result = (await response.json()) as SoundCloudPublishResponse;
+      setSoundCloudPublish({ status: "published", response: result });
+    } catch (error) {
+      setSoundCloudPublish({
+        status: "error",
+        error: error instanceof Error ? error.message : "SoundCloud publish failed",
+      });
     }
   }
 
@@ -1601,6 +1753,61 @@ export default function Home() {
                 Preview
               </button>
             </div>
+
+            {isConnected && (
+              <div className="mb-4 rounded-[8px] border border-white/10 bg-white/[0.02]">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between px-4 py-3 text-sm font-bold text-white/60 hover:text-white/90 transition-colors"
+                  onClick={() => setHistoryOpen((o) => !o)}
+                >
+                  <span className="flex items-center gap-2">
+                    <Clock className="size-4" />
+                    My tracks {historyEntries.length > 0 ? `(${historyEntries.length})` : ""}
+                  </span>
+                  <ChevronDown className={`size-4 transition-transform ${historyOpen ? "rotate-180" : ""}`} />
+                </button>
+                {historyOpen && (
+                  historyEntries.length === 0 ? (
+                    <p className="border-t border-white/10 px-4 py-4 text-sm text-white/35">
+                      No tracks yet — complete a verification to see your history here.
+                    </p>
+                  ) : (
+                    <ul className="border-t border-white/10 divide-y divide-white/5">
+                      {historyEntries.map((entry) => {
+                        const badge =
+                          entry.verdict === "CLEAN"
+                            ? { label: "CLEAN", cls: "bg-[#9ef7c9]/15 text-[#9ef7c9]" }
+                            : entry.verdict === "SIMILAR"
+                              ? { label: "SIMILAR", cls: "bg-[#ffd166]/15 text-[#ffd166]" }
+                              : entry.verdict === "REJECTED"
+                                ? { label: "REJECTED", cls: "bg-[#ff7777]/15 text-[#ff7777]" }
+                                : { label: "In progress", cls: "bg-white/10 text-white/50" };
+                        const date = new Date(entry.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                        return (
+                          <li key={entry.flowId} className="flex items-center justify-between gap-3 px-4 py-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-bold text-white/85">{entry.trackName}</p>
+                              <p className="text-xs text-white/40">{date}</p>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${badge.cls}`}>{badge.label}</span>
+                              <button
+                                type="button"
+                                className="rounded-full border border-white/15 px-3 py-1 text-xs font-bold text-white/70 hover:border-[#f59abd] hover:text-[#f59abd] transition-colors"
+                                onClick={() => restoreFlow(entry.flowId)}
+                              >
+                                Resume
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )
+                )}
+              </div>
+            )}
 
             <label
               className={`group block cursor-pointer rounded-[8px] border transition-all duration-200 p-6 ${
@@ -2043,10 +2250,53 @@ export default function Home() {
               className="mt-8 inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#8fd5ff] px-5 font-black text-[#050505] transition hover:bg-[#b8e5ff] disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={!hasRegistrySeal || !certificateTrackId || isWritingRegistry}
               onClick={handleRevealTrack}
+              type="button"
             >
               {isWritingRegistry ? "Revealing..." : "Reveal track"}
               <ArrowUpRight className="size-5" aria-hidden="true" />
             </button>
+
+            <div className="mt-6 border-t border-white/10 pt-6">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm uppercase text-white/45">Release</p>
+                  <h4 className="mt-1 font-display text-2xl font-black">SoundCloud</h4>
+                </div>
+                <Upload className="size-8 text-[#f59abd]" aria-hidden="true" />
+              </div>
+
+              {isCleanAndSealed ? (
+                <button
+                  className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#f59abd] px-5 font-black text-[#050505] transition hover:bg-[#ffb1ce] disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!canPublishToSoundCloud}
+                  onClick={handlePublishToSoundCloud}
+                  type="button"
+                >
+                  {soundCloudPublish.status === "publishing" ? "Publishing..." : "Publish to SoundCloud"}
+                  <ArrowUpRight className="size-5" aria-hidden="true" />
+                </button>
+              ) : (
+                <p className="rounded-[8px] border border-white/10 px-4 py-3 text-sm font-bold text-white/55">
+                  SoundCloud publish unlocks after a CLEAN seal.
+                </p>
+              )}
+
+              <div className="mt-4 min-h-6" aria-live="polite">
+                {soundCloudPublish.status === "published" ? (
+                  <a
+                    className="inline-flex items-center gap-2 text-sm font-black text-[#9ef7c9] transition hover:text-white"
+                    href={soundCloudPublish.response.soundcloud_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Published on SoundCloud
+                    <ExternalLink className="size-4" aria-hidden="true" />
+                  </a>
+                ) : soundCloudPublish.status === "error" ? (
+                  <p className="text-sm font-bold text-[#ff7777]">{soundCloudPublish.error}</p>
+                ) : null}
+              </div>
+            </div>
           </div>
         </div>
       </section>

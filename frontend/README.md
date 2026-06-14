@@ -45,6 +45,7 @@ Important variables:
 - `ECHO_PIPELINE_SECRET`: server-only bearer secret accepted by `/api/pipeline/events` for backend/CRE pipeline updates.
 - `CRE_TRIGGER_URL`: optional server-side URL called by `/api/pipeline/start` to start CRE simulation. Local MVP value: `http://localhost:2000/trigger`. Do not set this to the frontend app URL.
 - `CRE_TRIGGER_TIMEOUT_MS`: optional timeout for the CRE trigger call; defaults to `45000`.
+- `ECHO_SOUNDCLOUD_URL`: optional server-side base URL for the backend SoundCloud gateway/service. Defaults to `http://127.0.0.1:8080`. SoundCloud upload tokens stay in `backend/services/soundcloud-service/.env`.
 
 Check whether the real World config is complete:
 
@@ -61,6 +62,7 @@ curl http://localhost:3000/api/world/status
 - Persisted backend pipeline states initialized after real upload
 - Comparison report table fed from persisted `flow.report.similar_tracks`
 - SEALED certificate view shown only after `pipeline_completed` plus a confirmed Registry transaction hash
+- Post-SEAL SoundCloud publish control for CLEAN tracks, proxied through `/api/soundcloud/upload`
 - Responsive desktop/mobile visual system inspired by artist studio and music agency references
 
 ## Current Integration State
