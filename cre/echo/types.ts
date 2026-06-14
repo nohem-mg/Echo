@@ -46,6 +46,8 @@ export type AcrMatch = {
 
 export type CheckPublicResponse = {
   matches: AcrMatch[];
+  /** Humming / cover fingerprint matches when ACRCloud cover bucket is enabled. */
+  cover_matches?: AcrMatch[];
 };
 
 // --------------------------------------------------------------------------
@@ -54,6 +56,10 @@ export type CheckPublicResponse = {
 export type RegistryMatch = {
   track_id: string;
   similarity_score: number; // true compositional similarity %
+  /** Optional breakdown fields from midi-similarity-service (when returned). */
+  global_overlap?: number;
+  hook?: number;
+  hook_intervals?: number;
 };
 
 export type ComparePrivateResponse = {
