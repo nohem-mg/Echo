@@ -61,8 +61,10 @@
 - Connect to the Registry using the ABI at `contracts/out/Registry.sol/Registry.json`.
 - Do not call `registerTrack` before the backend has validated the World ID proof.
 - Always store the `trackId` returned by `registerTrack` — it is required for the certificate and reveal flow.
-- `registerTrack` signature: `(uint256 nullifier, bytes32 commitmentHash, bytes32 registryRef)`.
-- `revealTrack` can only be called by the wallet that originally called `registerTrack` for that track.
+- `registerTrack` signature: `(uint256 nullifier, bytes32 commitmentHash, address ownerKey, bytes32 registryRef)`. Ownership is the `ownerKey` parameter, never `msg.sender`.
+- `registerTrack` / `revealTrack` are routed through Unlink `execute()`, so the contract sees a pooled, anonymous `ExecutionAccount` as `msg.sender` (the artist's wallet never appears on-chain). Identity therefore comes from `ownerKey`, not the caller.
+- `revealTrack` is authorized by an ECDSA signature recovered against `trackOwner[trackId]` (the `ownerKey`), not by `msg.sender`.
+- Unlink scope: on-chain account privacy only (unlinkable register + private license settlement). It does NOT do x402, file/SoundCloud uploads, or audio transit — SoundCloud publishing is the separate `soundcloud-service`.
 
 ### backend/ — Express / Next.js / Python
 

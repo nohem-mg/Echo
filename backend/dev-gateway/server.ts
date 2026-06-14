@@ -53,8 +53,8 @@ const vlog = (...args: unknown[]) => {
 };
 
 async function loadUnlinkRoutes(): Promise<UnlinkRouteHandlers> {
-  if (!process.env.UNLINK_API_KEY?.trim() || !process.env.UNLINK_MNEMONIC?.trim()) {
-    vlog("unlink disabled (UNLINK_API_KEY / UNLINK_MNEMONIC not set)");
+  if (!process.env.UNLINK_API_KEY?.trim()) {
+    vlog("unlink disabled (UNLINK_API_KEY not set)");
     return {};
   }
 

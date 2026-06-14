@@ -146,16 +146,23 @@ The report produced by Step 4 is rendered in the artist interface as an interact
 
 * **Verdict Rule:** Global score of the top match < 75% → verdict CLEAN, SEAL procedure is triggered. Score ≥75% → verdict SIMILAR, report is displayed to the artist, no on-chain write occurs.
 
-### 3.5 SoundCloud Integration via Unlink
+### 3.5 SoundCloud Integration
 
-After a successful SEALED registration, the artist can optionally publish their track to SoundCloud using the SoundCloud API. This workflow is entirely routed through Unlink: private audio transit, untraceable payment, and an on-chain inobservable link between the Echo Protocol registration and the SoundCloud publication.
+After a successful SEALED registration, the artist can optionally publish their track to SoundCloud. This is handled by the dedicated `soundcloud-service`: the audio is streamed directly to the SoundCloud API and never stored at rest. (Note: this path does not use Unlink — Unlink operates only at the on-chain account/transaction layer, see §3.7.)
 
 ### 3.6 Clearance API (Monetisation)
 
-External applications can query the registry via the Clearance API. Each query requires a x402 micro-payment:
+External applications can query the registry via the Clearance API. Each query requires a micro-payment:
 * IP verification before upload for streaming platforms.
 * Dataset screening for AI companies.
 * Certified reports for IP attorneys.
+
+### 3.7 Unlink — On-chain Privacy Layer
+
+Unlink provides private blockchain account operations (it hides balances, amounts, and transaction history; primitives: `deposit`, `transfer`, `withdraw`, `execute`). Echo uses it at the **on-chain account/transaction layer only** — never for file uploads, audio transit, or HTTP payments:
+
+1. **Unlinkable registration** — `registerTrack` is called via Unlink `execute()`. The target contract sees a pooled `ExecutionAccount` as `msg.sender`, so the artist's public wallet never appears on-chain. The ownership identity is passed explicitly as a parameter (an `ownerKey`), not inferred from `msg.sender`, and proven later by signature (reveal, license).
+2. **Private license settlement** — a buyer pays the owner for a license through a private Unlink transfer/`execute`, hiding the parties and the amount.
 
 ---
 
@@ -198,11 +205,11 @@ Chainlink Confidential AI provides hardware isolation (Intel TDX) for agents ope
 | **Confidential AI**      | Chainlink Confidential AI    | Executes agents A, B, C, and D inside TEE enclaves. Generates cryptographically verifiable on-chain attestations.                                                          |
 | **Commercial Detection** | ACRCloud                     | Agent A: Shazam-style commercial check in Phase 1. Acoustic fingerprint comparison against the global catalogue of released tracks.                                        |
 | **MIDI Conversion**      | BasicPitch (Spotify)         | Agent B: audio → MIDI conversion + key, BPM, fingerprint, chord, and structural extraction.                                                                                |
-| **Privacy Layer**        | Unlink SDK                   | Routes all agent payments (x402) and SoundCloud transmission through private balances, preventing transaction graph analysis.                                              |
+| **Privacy Layer**        | Unlink SDK                   | On-chain account privacy: unlinkable `registerTrack` via `execute()` (artist wallet never on-chain) and private license settlement. Hides parties, amounts, and the wallet↔track link. Not used for uploads or HTTP payments. |
 | **Storage**              | PostgreSQL                   | Registry tracks database (service `registry-db` of docker-compose). Stores full MIDI and skyline interval profiles. Accessible only via the `midi-similarity-service` API. |
 | **Blockchain**           | Ethereum Sepolia             | Hosts the `Registry` smart contract.                                                                                                                                       |
 | **Wallet / Auth**        | MetaMask / World App (wagmi) | Transaction signing for artists. World App serves as the primary interface for World ID.                                                                                   |
-| **Payments**             | x402 Protocol                | Machine-to-machine HTTP micro-payments for the 5 agents and Clearance API queries. All x402 flows route through Unlink.                                                    |
+| **Payments**             | x402 Protocol                | Machine-to-machine HTTP micro-payments for Clearance API queries. Separate from Unlink (Unlink is on-chain account privacy, not an HTTP-payment transport).                |
 
 ### 5.1 PostgreSQL Storage Architecture
 
@@ -260,7 +267,7 @@ Chainlink CRE acts as a trusted off-chain executor. Once the 5-phase DAG complet
 1. **World ID Integration** — World Router contract on ethereum sepolia, AgentKit credential issuance, free-trial mechanics (3 free registrations per human).
 2. **5-Phase DAG CRE Workflow** — Parallelisation A ∥ B (Phase 1) and C ∥ D (Phase 2). Simulated via CRE CLI, live deployment requested from Chainlink.
 3. **4 Chainlink Confidential AI Agents** — Agents A, B, C, D in TEE. Attestations verified by the Registry contract.
-4. **Unlink SDK Integration** — x402 payments for the 5 agents + SoundCloud uploads routed via Unlink private balances.
+4. **Unlink SDK Integration** — unlinkable on-chain `registerTrack` via `execute()` (artist wallet never on-chain) + private license settlement.
 5. **PostgreSQL Storage**
 6. **Final Comparison Report** — Agent E: ranked list of N similar tracks with multidimensional scores and AI commentary.
 7. **Front-end Demo** — Next.js / wagmi interface: track upload, World App verification, SEALED certificate generation + comparison report display.
