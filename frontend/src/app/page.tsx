@@ -2005,7 +2005,7 @@ export default function Home() {
                     <LockKeyhole className="echo-lock-nudge size-5 text-[#f59abd]" aria-hidden="true" />
                   </div>
                   <p className="max-w-xl text-lg leading-7 text-white/72">
-                    Upload your track, run a confidential plagiarism check, and seal a prior-art proof on-chain — reveal it publicly whenever you&apos;re ready.
+                    Upload your track, run a confidential plagiarism check, and seal a prior-art proof on-chain. Reveal it publicly whenever you&apos;re ready.
                   </p>
                 </div>
 
@@ -2169,7 +2169,6 @@ export default function Home() {
                 onClick={handlePrimaryAction}
                 type="button"
               >
-                <Upload className="size-5" aria-hidden="true" />
                 {payment.status === "paid"
                   ? isStartingPipeline
                     ? "Starting..."
