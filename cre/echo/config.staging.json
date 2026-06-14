@@ -2,8 +2,10 @@
   "backendBaseUrl": "http://127.0.0.1:8080",
   "useConfidentialHttp": true,
   "secretsOwner": "",
-  "registryAddress": "0xd2A1ec2a6Ef3973A1519E9aaf0A77c01955E0f72",
+  "registryAddress": "0xFAe31a6812A6723510219F0c54557318dD89d77f",
   "writeReportGasLimit": "500000",
+  "sepoliaRpcUrl": "https://ethereum-sepolia-rpc.publicnode.com",
+  "keystoneForwarderAddress": "0x15fc6ae953e024d975e77382eeec56a9101f9f88",
   "pipelineEventsUrl": "http://127.0.0.1:3000/api/pipeline/events",
   "pipelineEventsSecret": "dev-test"
 }

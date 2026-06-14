@@ -17,10 +17,12 @@ It handles the SoundCloud API interactions, including automatic OAuth token refr
 
 See `.env.example` for required environment variables. Key variables include:
 
-- `SOUNDCLOUD_CLIENT_ID`: Your SoundCloud App Client ID
-- `SOUNDCLOUD_CLIENT_SECRET`: Your SoundCloud App Client Secret
-- `ECHO_MAX_UPLOAD_BYTES`: Max file size limit
-- `ECHO_ALLOWED_EXTENSIONS`: Allowed audio formats
+- `ECHO_SC_CLIENT_ID`: Your SoundCloud App Client ID
+- `ECHO_SC_CLIENT_SECRET`: Your SoundCloud App Client Secret
+- `ECHO_SC_ACCESS_TOKEN`: optional server-side SoundCloud access token used when upload metadata does not include one.
+- `ECHO_SC_REFRESH_TOKEN`: optional server-side SoundCloud refresh token used to renew expired access tokens.
+- `ECHO_SC_MAX_UPLOAD_BYTES`: Max file size limit
+- `ECHO_SC_ALLOWED_EXTENSIONS`: Allowed audio formats
 
 ## API Endpoints
 
@@ -39,6 +41,8 @@ Upload an audio file to SoundCloud.
     "refresh_token": "sc-refresh-token"
   }
   ```
+
+`access_token` and `refresh_token` can be omitted when `ECHO_SC_ACCESS_TOKEN` / `ECHO_SC_REFRESH_TOKEN` are configured on the service.
 
 **Response**: 
 ```json

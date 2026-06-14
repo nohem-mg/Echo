@@ -64,20 +64,35 @@ def test_upload_public_privacy(client, patch_upload):
     assert r.status_code == 200
 
 
+def test_upload_uses_configured_access_token(client, patch_upload, monkeypatch):
+    from tests.conftest import SC_TRACK_PAYLOAD
+
+    patch_upload(SC_TRACK_PAYLOAD)
+    monkeypatch.setattr(client.app.state.service._s, "access_token", "configured-token")
+    meta = json.dumps({"title": "Configured Token", "privacy": "private"})
+    r = client.post(
+        "/api/soundcloud/upload",
+        files={"file": ("track.mp3", _audio(), "audio/mpeg")},
+        data={"metadata": meta},
+    )
+    assert r.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Validation errors
 # ---------------------------------------------------------------------------
 
 
 def test_upload_missing_access_token(client):
-    """access_token is required — missing field → 422."""
+    """access_token is required from metadata or service env."""
     meta = json.dumps({"title": "No Token", "privacy": "private"})
     r = client.post(
         "/api/soundcloud/upload",
         files={"file": ("track.mp3", _audio(), "audio/mpeg")},
         data={"metadata": meta},
     )
-    assert r.status_code == 422
+    assert r.status_code == 502
+    assert r.json()["code"] == "configuration_error"
 
 
 def test_upload_invalid_metadata_json(client):
@@ -181,4 +196,3 @@ def test_upload_refresh_missing_token(client, monkeypatch):
         data={"metadata": metadata},
     )
     assert r.status_code == 502
-

@@ -21,6 +21,12 @@ import { BackendError } from "./backend";
 import { buildRegistryCallback } from "./callback";
 import { createBackendClient, type PipelineClient } from "./client";
 import { dispatchOnChainCallback } from "./evm-callback";
+import {
+  logBlockedPipelineSummary,
+  logPlagiarismHalt,
+  logRegistrySimilarHalt,
+  logStep2ComparisonSnapshot,
+} from "./marius-logs";
 import { parsePipelineInput } from "./parse-input";
 import {
   createPipelineEventSink,
@@ -241,16 +247,36 @@ export const runPipelineWithClient = (
     updateStep("02B", { status: "running", progress: 20, meta: "Private registry running" });
     const handle2a = client.checkPublic(input.audioRef);
     const handle2b = client.comparePrivate(midiSequence);
-    const matches = handle2a.result().matches;
+    const checkPublic = handle2a.result();
+    const matches = checkPublic.matches;
+    const coverMatches = checkPublic.cover_matches ?? [];
     const registryMatches = handle2b.result().registry_matches;
     log(`Step 2A OK — ACRCloud matches (≥50%): ${formatMatches2a(matches)}`);
     log(`Step 2B OK — registry matches: ${formatMatches2b(registryMatches)}`);
+    if (coverMatches.length > 0) {
+      log(`Step 2A cover — ${coverMatches.length} humming/cover candidate(s)`);
+    }
+    logStep2ComparisonSnapshot(log, input, midiSequence, {
+      acrMatches: matches,
+      coverMatches,
+      registryMatches,
+    });
 
     // ---- Fail-fast 2A: obvious plagiarism ---------------------------------
     const plagiarism = matches.find((m) => m.confidence_score >= THRESHOLD_PLAGIARISM);
     if (plagiarism) {
       const matchLabel = formatAcrMatchLabel(plagiarism);
+      const reason = `ACRCloud plagiarism ${plagiarism.confidence_score}%`;
+      const report = buildPlagiarismReport(plagiarism, reason);
       log(`STOP 2A — plagiarism (${plagiarism.confidence_score}% on ${plagiarism.ISRC})`);
+      logPlagiarismHalt(log, input, midiSequence, {
+        trigger: plagiarism,
+        allMatches: matches,
+        coverMatches,
+        registryMatches,
+        report,
+        reason,
+      });
       updateStep("02A", {
         status: "blocked",
         progress: 100,
@@ -269,20 +295,26 @@ export const runPipelineWithClient = (
         ...halt(
           input,
           "REJECTED",
-          `ACRCloud plagiarism ${plagiarism.confidence_score}%`,
+          reason,
           client.getAgentAttestations(),
         ),
-        report: buildPlagiarismReport(
-          plagiarism,
-          `ACRCloud plagiarism ${plagiarism.confidence_score}%`,
-        ),
+        report,
       };
     }
 
     // ---- Fail-fast 2B: similar to private registry ----------------------
     const similar = registryMatches.find((m) => m.similarity_score >= THRESHOLD_SIMILAR);
     if (similar) {
+      const reason = `private registry match ${similar.similarity_score}%`;
+      const report = buildSimilarRegistryReport(similar, reason);
       log(`STOP 2B — SIMILAR (${similar.similarity_score}% vs ${similar.track_id})`);
+      logRegistrySimilarHalt(log, input, midiSequence, {
+        trigger: similar,
+        allMatches: registryMatches,
+        acrMatches: matches,
+        report,
+        reason,
+      });
       updateStep("02A", { status: "done", progress: 100, meta: `${matches.length} public match(es)` });
       updateStep("02B", {
         status: "blocked",
@@ -294,13 +326,10 @@ export const runPipelineWithClient = (
         ...halt(
           input,
           "SIMILAR",
-          `private registry match ${similar.similarity_score}%`,
+          reason,
           client.getAgentAttestations(),
         ),
-        report: buildSimilarRegistryReport(
-          similar,
-          `private registry match ${similar.similarity_score}%`,
-        ),
+        report,
       };
     }
     updateStep("02A", { status: "done", progress: 100, meta: `${matches.length} public match(es)` });
@@ -396,6 +425,13 @@ export const runPipeline = (runtime: Runtime<Config>, input: PipelineInput): Pip
   }
 
   notifyPipelineCompletion(runtime, runtime.config, input, finalized);
+  if (finalized.verdict === "REJECTED" || finalized.verdict === "SIMILAR") {
+    logBlockedPipelineSummary((message) => runtime.log(message), input, {
+      verdict: finalized.verdict,
+      reason: finalized.reason,
+      report: finalized.report,
+    });
+  }
   return finalized;
 };
 
