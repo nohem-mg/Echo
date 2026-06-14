@@ -24,6 +24,8 @@ import {
   Sparkles,
   Tag,
   Upload,
+  Volume2,
+  VolumeX,
   WalletCards,
   Waves,
   X,
@@ -32,6 +34,8 @@ import { parseEther, toHex, type Abi } from "viem";
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
+import { echoSounds } from "@/lib/sound-design";
+import { useEchoSoundEffects } from "@/lib/use-echo-sound-effects";
 import escrowAbiJson from "@/lib/abi/LicenseEscrow.json";
 import { useFlowHistory } from "@/lib/use-flow-history";
 import {
@@ -619,6 +623,7 @@ export default function Home() {
   const [soundCloudPublish, setSoundCloudPublish] = useState<SoundCloudPublishState>({ status: "idle" });
   const [sellModalOpen, setSellModalOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [sfxEnabled, setSfxEnabled] = useState(true);
   const sealAttemptedRef = useRef<string | null>(null);
   const sealInFlightRef = useRef<string | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -664,6 +669,7 @@ export default function Home() {
   const publicReferences = useMemo(() => activeReport?.public_references ?? [], [activeReport]);
   const bestReportMatch = getBestMatch(activeReport);
   const hasRegistrySeal = Boolean(flow?.status === "pipeline_completed" && flow.registryTxHash);
+  useEchoSoundEffects(flow, livePipelineSteps, pipelineStarted, hasRegistrySeal);
   const isCleanAndSealed = Boolean(hasRegistrySeal && activeReport?.verdict === "CLEAN");
   const certificateTrackId = flow?.registryTrackId;
   const certificateTxHash = flow?.registryTxHash;
@@ -732,6 +738,10 @@ export default function Home() {
 
     return echoConfig.mockWorldEnabled ? "Demo mode enabled" : "World Developer Portal credentials required";
   }, [audioName, flow, payment, pipelineProgressStatus, pipelineStarted, trackFingerprint, verification]);
+
+  useEffect(() => {
+    setSfxEnabled(echoSounds.isEnabled());
+  }, []);
 
   useEffect(() => {
     if (payment.status !== "pending" || !paymentReceiptError) {
@@ -815,6 +825,7 @@ export default function Home() {
           blockNumber: confirmed.transaction?.blockNumber ?? receiptBlockNumber,
         });
         setPendingQuote(null);
+        echoSounds.paymentSuccess();
       } catch (error) {
         if (cancelled) {
           return;
@@ -1345,6 +1356,7 @@ export default function Home() {
     if (audio.paused) {
       try {
         await audio.play();
+        echoSounds.previewPlay();
       } catch {
         setIsPlaying(false);
       }
@@ -1352,6 +1364,7 @@ export default function Home() {
     }
 
     audio.pause();
+    echoSounds.previewPause();
   }
 
   async function restoreFlow(flowId: string) {
@@ -1390,6 +1403,7 @@ export default function Home() {
 
     try {
       setTrackFingerprint(await createAudioFingerprint(file));
+      echoSounds.trackUpload();
     } catch {
       setVerification({
         status: "error",
@@ -1455,6 +1469,7 @@ export default function Home() {
           mode: "mock",
           flow: verified.flow,
         });
+        echoSounds.verifySuccess();
         return;
       }
 
@@ -1539,6 +1554,7 @@ export default function Home() {
         flow: verified.flow,
       });
       setWorldQr(null);
+      echoSounds.verifySuccess();
     } catch (error) {
       setWorldQr(null);
       setVerification({
@@ -1728,10 +1744,12 @@ export default function Home() {
         setPipelineStarted(true);
         setCreDisabled(true);
         setPipelineProgressStatus("Pipeline initialized. Running local simulation...");
+        echoSounds.pipelineStart();
       } else {
         setPipelineStarted(true);
         setCreDisabled(false);
         setPipelineProgressStatus("Confidential analysis pipeline running...");
+        echoSounds.pipelineStart();
       }
     } catch (error) {
       setPipelineProgressStatus(`Pipeline start failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1947,7 +1965,18 @@ export default function Home() {
             <span className="rounded-full border border-white/15 px-4 py-2">NYC 2026</span>
             <span className="rounded-full border border-white/15 px-4 py-2">Artist prior-art</span>
           </div>
-          <WalletConnectControl tone="header" />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="grid size-10 place-items-center rounded-full border border-white/15 text-white/70 transition hover:border-[#f59abd] hover:text-[#f59abd]"
+              onClick={() => setSfxEnabled(echoSounds.toggle())}
+              aria-label={sfxEnabled ? "Mute interface sounds" : "Enable interface sounds"}
+              title={sfxEnabled ? "Mute interface sounds" : "Enable interface sounds"}
+            >
+              {sfxEnabled ? <Volume2 className="size-4" aria-hidden="true" /> : <VolumeX className="size-4" aria-hidden="true" />}
+            </button>
+            <WalletConnectControl tone="header" />
+          </div>
         </div>
       </div>
 
