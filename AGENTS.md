@@ -1,8 +1,8 @@
 # AGENTS.md — Echo / ETH Global New York 2026
 
 > Read this file fully before writing any code.
-> Full technical context: `docs/Echo_ETHGlobalNY2026_FR_v3.md`
-> Task breakdown: `docs/Echo_Tasks_CNM.md`
+> Full technical context: `docs/ECHO_ETHGlobalNY_.md`
+> Project overview: `README.md`
 
 ---
 
@@ -31,8 +31,9 @@
 ## Network
 
 - Chain: Ethereum Sepolia (chain ID 11155111)
-- Registry contract: `0xd2A1ec2a6Ef3973A1519E9aaf0A77c01955E0f72`
-- ABI: `contracts/out/Registry.sol/Registry.json`
+- Registry contract: `0x0E0f9A9e1D5d5825F7590E04EbBcAdBFB8365148`
+- LicenseEscrow contract: `0xdc6453ee06ab4ee2cca8a10bcbe3377b8ba02492`
+- ABIs: `contracts/out/Registry.sol/Registry.json`, `contracts/out/LicenseEscrow.sol/LicenseEscrow.json`
 
 ---
 
