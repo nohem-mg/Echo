@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { Check, Upload } from "@phosphor-icons/react";
 import { SpeakerHigh as Volume2, SpeakerX as VolumeX } from "@phosphor-icons/react";
-import { parseEther, toHex, keccak256, type Abi } from "viem";
+import { parseEther, parseUnits, toHex, keccak256, type Abi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { useAccount, useChainId, usePublicClient, useSignMessage, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { useUnlinkEscrow } from "@/lib/use-unlink-escrow";
