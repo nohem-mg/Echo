@@ -22,15 +22,17 @@ import {
   QrCode as QrCodeIcon,
   Radio,
   Sparkles,
+  Tag,
   Upload,
   WalletCards,
   Waves,
   X,
 } from "lucide-react";
-import { toHex, type Abi } from "viem";
+import { parseEther, toHex, type Abi } from "viem";
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { sepolia } from "wagmi/chains";
 import { echoConfig, isWorldConfigured } from "@/lib/config";
+import escrowAbiJson from "@/lib/abi/LicenseEscrow.json";
 import { useFlowHistory } from "@/lib/use-flow-history";
 import {
   buildFlowCommitmentHash,
@@ -77,6 +79,165 @@ type SoundCloudPublishState =
 type ReportTableMatch = EchoSimilarTrack & {
   keyLabel: string;
 };
+
+const escrowAbi = escrowAbiJson.abi as Abi;
+const LICENSE_LABELS = ["Sync", "Beat", "Full"] as const;
+const DURATION_LABELS = ["1 an", "Perpétuel"] as const;
+
+function SellRightsModal({
+  trackId,
+  onClose,
+}: {
+  trackId: string;
+  onClose: () => void;
+}) {
+  const [priceInput, setPriceInput] = useState("0.05");
+  const [licenseType, setLicenseType] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [copied, setCopied] = useState(false);
+
+  const { writeContract, data: txHash, isPending, error: writeError, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+    hash: txHash,
+    chainId: sepolia.id,
+  });
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    writeContract({
+      address: echoConfig.escrowAddress as `0x${string}`,
+      abi: escrowAbi,
+      functionName: "createListing",
+      args: [trackId as `0x${string}`, parseEther(priceInput || "0"), licenseType, duration],
+      chain: sepolia,
+    });
+  }
+
+  async function handleCopyTrackId() {
+    await navigator.clipboard.writeText(trackId);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  const errorMessage = writeError ? writeError.message.split("\n")[0]?.slice(0, 140) : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="relative w-full max-w-md rounded-[8px] border border-white/15 bg-[#0a0a0a] p-6 text-[#f8f6ee] shadow-2xl">
+        <button onClick={onClose} className="absolute right-4 top-4 text-white/40 hover:text-white/80" type="button">
+          <X className="size-5" />
+        </button>
+
+        <div className="mb-1 flex items-center gap-2">
+          <Tag className="size-4 text-[#f59abd]" />
+          <p className="text-sm uppercase tracking-wider text-white/45">Vendre mes droits</p>
+        </div>
+        <h2 className="font-display text-2xl font-black">Créer un listing</h2>
+
+        <div className="mt-4 rounded-[6px] border border-white/10 bg-white/5 px-3 py-2">
+          <p className="mb-1 text-xs text-white/40">Track ID à partager avec l&apos;acheteur</p>
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate font-mono text-xs text-[#9ef7c9]">{trackId}</code>
+            <button
+              type="button"
+              onClick={handleCopyTrackId}
+              className="shrink-0 rounded-full border border-white/15 px-2 py-1 text-xs text-white/60 transition hover:border-[#f59abd] hover:text-[#f59abd]"
+            >
+              {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+            </button>
+          </div>
+        </div>
+
+        {isSuccess ? (
+          <div className="mt-5 space-y-3">
+            <div className="flex items-center gap-2 rounded-[6px] border border-[#9ef7c9]/30 bg-[#9ef7c9]/10 p-3 text-sm text-[#9ef7c9]">
+              <Check className="size-4 shrink-0" />
+              Listing créé sur Sepolia.
+              {txHash && (
+                <a href={`${echoConfig.registryExplorer}/tx/${txHash}`} target="_blank" rel="noopener noreferrer" className="ml-auto flex items-center gap-1 text-xs underline opacity-70">
+                  Voir <ExternalLink className="size-3" />
+                </a>
+              )}
+            </div>
+            <p className="text-center text-xs text-white/40">
+              Partagez le Track ID ci-dessus avec l&apos;acheteur.
+              <br />
+              Il le saisira sur{" "}
+              <a href="/marketplace" className="text-[#f59abd] underline">
+                /marketplace
+              </a>{" "}
+              pour acheter la licence.
+            </p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-white/40">Type de licence</label>
+                <div className="relative">
+                  <select
+                    value={licenseType}
+                    onChange={(e) => setLicenseType(Number(e.target.value))}
+                    className="w-full appearance-none rounded-[6px] border border-white/15 bg-black px-3 py-2 text-sm text-white focus:border-[#f59abd]/50 focus:outline-none"
+                  >
+                    {LICENSE_LABELS.map((label, i) => (
+                      <option key={i} value={i}>{label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2 top-2.5 size-4 text-white/30" />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-white/40">Durée</label>
+                <div className="relative">
+                  <select
+                    value={duration}
+                    onChange={(e) => setDuration(Number(e.target.value))}
+                    className="w-full appearance-none rounded-[6px] border border-white/15 bg-black px-3 py-2 text-sm text-white focus:border-[#f59abd]/50 focus:outline-none"
+                  >
+                    {DURATION_LABELS.map((label, i) => (
+                      <option key={i} value={i}>{label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2 top-2.5 size-4 text-white/30" />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-white/40">Prix (ETH Sepolia)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.001"
+                value={priceInput}
+                onChange={(e) => setPriceInput(e.target.value)}
+                className="w-full rounded-[6px] border border-white/15 bg-black px-3 py-2 text-sm text-white focus:border-[#f59abd]/50 focus:outline-none"
+                placeholder="0.05"
+              />
+            </div>
+
+            {errorMessage && (
+              <div className="flex items-start gap-2 rounded-[6px] border border-[#ff7777]/30 bg-[#ff7777]/10 p-3 text-xs text-[#ff7777]">
+                <span className="shrink-0">Erreur :</span>
+                <span className="break-all">{errorMessage}</span>
+                <button type="button" onClick={reset} className="ml-auto shrink-0 opacity-60 hover:opacity-100"><X className="size-3" /></button>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isPending || isConfirming || !priceInput || Number(priceInput) <= 0}
+              className="w-full rounded-[6px] bg-[#f59abd] py-3 text-sm font-semibold text-[#050505] transition hover:opacity-90 disabled:opacity-50"
+            >
+              {isPending || isConfirming ? "En attente de confirmation…" : `Mettre en vente · ${priceInput || "0"} ETH`}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const pipelineSteps = [
   {
@@ -456,6 +617,7 @@ export default function Home() {
   const [isSealingOnChain, setIsSealingOnChain] = useState(false);
   const [soundCloudTitle, setSoundCloudTitle] = useState("");
   const [soundCloudPublish, setSoundCloudPublish] = useState<SoundCloudPublishState>({ status: "idle" });
+  const [sellModalOpen, setSellModalOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const sealAttemptedRef = useRef<string | null>(null);
   const sealInFlightRef = useRef<string | null>(null);
@@ -1148,7 +1310,6 @@ export default function Home() {
       previewAudioUrlRef.current = null;
     }
 
-    setIsPlaying(false);
     audio?.pause();
 
     if (!audioFile) {
@@ -1820,7 +1981,7 @@ export default function Home() {
                     <LockKeyhole className="echo-lock-nudge size-5 text-[#f59abd]" aria-hidden="true" />
                   </div>
                   <p className="max-w-xl text-lg leading-7 text-white/72">
-                    A TEE-attested prior-art record for unreleased music, designed for artists who need proof without public exposure.
+                    Upload your track, run a confidential plagiarism check, and seal a prior-art proof on-chain — reveal it publicly whenever you&apos;re ready.
                   </p>
                 </div>
 
@@ -2433,9 +2594,39 @@ export default function Home() {
                 ) : null}
               </div>
             </div>
+
+            <div className="mt-6 border-t border-white/10 pt-6">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm uppercase text-white/45">Licensing</p>
+                  <h4 className="mt-1 font-display text-2xl font-black">Sell my rights</h4>
+                </div>
+                <Tag className="size-8 text-[#fff7cf]" aria-hidden="true" />
+              </div>
+
+              {isCleanAndSealed && certificateTrackId ? (
+                <button
+                  className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#fff7cf] px-5 font-black text-[#050505] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!echoConfig.escrowAddress}
+                  onClick={() => setSellModalOpen(true)}
+                  type="button"
+                >
+                  <Tag className="size-5" aria-hidden="true" />
+                  {echoConfig.escrowAddress ? "Mettre en vente" : "Escrow non déployé"}
+                </button>
+              ) : (
+                <p className="rounded-[8px] border border-white/10 px-4 py-3 text-sm font-bold text-white/55">
+                  La vente de droits est disponible après un seal CLEAN.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </section>
+
+      {sellModalOpen && certificateTrackId && (
+        <SellRightsModal trackId={certificateTrackId} onClose={() => setSellModalOpen(false)} />
+      )}
 
       {worldQr ? <WorldIdQrModal connectorURI={worldQr.connectorURI} imageDataUrl={worldQr.imageDataUrl} onClose={() => setWorldQr(null)} /> : null}
 
