@@ -18,6 +18,21 @@ type SoundId =
 
 let audioContext: AudioContext | null = null;
 
+type VinylHoverState = {
+  oscillators: OscillatorNode[];
+  noiseSource: AudioBufferSourceNode | null;
+  masterGain: GainNode;
+  warmFilter: BiquadFilterNode;
+  melodyTimer: ReturnType<typeof setInterval> | null;
+  melodyStep: number;
+};
+
+let vinylHoverState: VinylHoverState | null = null;
+
+// Cozy Dm9 pad + sparse soul plucks (lo-fi jazz feel).
+const VINYL_PAD_HZ = [146.83, 174.61, 220, 261.63, 329.63] as const;
+const VINYL_MELODY_HZ = [392, 440, 493.88, 523.25, 493.88, 440] as const;
+
 function prefersQuietUi(): boolean {
   if (typeof window === "undefined") {
     return true;
@@ -26,21 +41,32 @@ function prefersQuietUi(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function isEnabled(): boolean {
+function isMuted(): boolean {
   if (typeof window === "undefined") {
     return false;
   }
 
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === "off") {
-      return false;
-    }
+    return localStorage.getItem(STORAGE_KEY) === "off";
   } catch {
+    return false;
+  }
+}
+
+function isEnabled(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  if (isMuted()) {
     return false;
   }
 
   return !prefersQuietUi();
+}
+
+function canPlayVinylHover(): boolean {
+  return !isMuted();
 }
 
 function setEnabled(enabled: boolean) {
@@ -51,12 +77,31 @@ function setEnabled(enabled: boolean) {
   }
 }
 
-function getContext(): AudioContext | null {
-  if (!isEnabled() || typeof window === "undefined") {
+function getAudioContextClass(): typeof AudioContext | null {
+  if (typeof window === "undefined") {
     return null;
   }
 
-  const AudioCtx = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  return window.AudioContext
+    ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    ?? null;
+}
+
+async function ensureAudioReady(): Promise<AudioContext | null> {
+  if (!isEnabled()) {
+    return null;
+  }
+
+  return resumeAudioContext();
+}
+
+/** Call synchronously inside pointerdown/click — keeps the browser user-gesture unlock. */
+function prepareAudioFromUserGesture(): AudioContext | null {
+  if (!canPlayVinylHover()) {
+    return null;
+  }
+
+  const AudioCtx = getAudioContextClass();
   if (!AudioCtx) {
     return null;
   }
@@ -70,6 +115,54 @@ function getContext(): AudioContext | null {
   }
 
   return audioContext;
+}
+
+async function resumeAudioContext(): Promise<AudioContext | null> {
+  const AudioCtx = getAudioContextClass();
+  if (!AudioCtx) {
+    return null;
+  }
+
+  if (!audioContext) {
+    audioContext = new AudioCtx();
+  }
+
+  if (audioContext.state === "suspended") {
+    try {
+      await audioContext.resume();
+    } catch {
+      return null;
+    }
+  }
+
+  return audioContext.state === "running" ? audioContext : null;
+}
+
+let unlockListenersInstalled = false;
+let userHasInteracted = false;
+
+function markUserInteracted(): AudioContext | null {
+  userHasInteracted = true;
+  return prepareAudioFromUserGesture();
+}
+
+function isAudioRunning(): boolean {
+  return audioContext?.state === "running";
+}
+
+function installAudioUnlockListeners() {
+  if (unlockListenersInstalled || typeof window === "undefined") {
+    return;
+  }
+
+  unlockListenersInstalled = true;
+
+  const unlock = () => {
+    markUserInteracted();
+  };
+
+  window.addEventListener("pointerdown", unlock, { passive: true });
+  window.addEventListener("keydown", unlock, { passive: true });
 }
 
 function createNoiseBuffer(ctx: AudioContext, seconds: number): AudioBuffer {
@@ -182,36 +275,286 @@ const SOUND_PLAYERS: Record<SoundId, (ctx: AudioContext) => void> = {
     playSequence(ctx, [554.37, 659.25, 880], 0.09);
   },
   uiClick: (ctx) => {
-    playTone(ctx, 620, 0.04, { type: "triangle", gain: 0.25 });
+    playTone(ctx, 520, 0.045, { type: "triangle", gain: 0.2 });
+    playTone(ctx, 780, 0.03, { gain: 0.1, delay: 0.004 });
   },
 };
 
+function playFromUserGesture(id: SoundId) {
+  if (isMuted()) {
+    return;
+  }
+
+  const ctx = markUserInteracted();
+  if (!ctx) {
+    return;
+  }
+
+  const playNow = () => {
+    try {
+      SOUND_PLAYERS[id](ctx);
+    } catch {
+      // Audio should never break the UI.
+    }
+  };
+
+  if (ctx.state === "running") {
+    playNow();
+    return;
+  }
+
+  void ctx.resume().then((resumed) => {
+    if (resumed) {
+      playNow();
+    }
+  });
+}
+
+function uiClickFromUserGesture() {
+  playFromUserGesture("uiClick");
+}
+
 function play(id: SoundId) {
-  const ctx = getContext();
+  void ensureAudioReady().then((ctx) => {
+    if (!ctx) {
+      return;
+    }
+
+    try {
+      SOUND_PLAYERS[id](ctx);
+    } catch {
+      // Audio should never break the UI.
+    }
+  });
+}
+
+function playWarmPluck(
+  ctx: AudioContext,
+  destination: AudioNode,
+  frequency: number,
+  peakGain = 0.045,
+) {
+  const when = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const tone = ctx.createBiquadFilter();
+  const env = ctx.createGain();
+
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(frequency, when);
+
+  tone.type = "lowpass";
+  tone.frequency.setValueAtTime(1180, when);
+  tone.Q.value = 0.6;
+
+  env.gain.setValueAtTime(0.0001, when);
+  env.gain.exponentialRampToValueAtTime(peakGain, when + 0.04);
+  env.gain.exponentialRampToValueAtTime(0.0001, when + 0.72);
+
+  osc.connect(tone);
+  tone.connect(env);
+  env.connect(destination);
+  osc.start(when);
+  osc.stop(when + 0.78);
+}
+
+function startVinylHoverWithContext(ctx: AudioContext) {
+  if (vinylHoverState) {
+    return;
+  }
+
+  try {
+    // Immediate audible cue so hover feedback is obvious.
+    playTone(ctx, 220, 0.18, { type: "triangle", gain: 0.55, delay: 0.02 });
+    playTone(ctx, 329.63, 0.22, { type: "sine", gain: 0.4, delay: 0.08 });
+
+    const start = ctx.currentTime;
+    const warmFilter = ctx.createBiquadFilter();
+    const masterGain = ctx.createGain();
+    const padBus = ctx.createGain();
+
+    warmFilter.type = "lowpass";
+    warmFilter.frequency.setValueAtTime(1050, start);
+    warmFilter.Q.value = 0.45;
+
+    padBus.gain.setValueAtTime(0.55, start);
+    padBus.connect(warmFilter);
+    warmFilter.connect(masterGain);
+    masterGain.gain.setValueAtTime(0.0001, start);
+    masterGain.gain.exponentialRampToValueAtTime(MASTER_GAIN * 0.34, start + 0.28);
+    masterGain.connect(ctx.destination);
+
+    const oscillators: OscillatorNode[] = [];
+
+    for (const frequency of VINYL_PAD_HZ) {
+      const osc = ctx.createOscillator();
+      const voice = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(frequency, start);
+      osc.detune.setValueAtTime((Math.random() - 0.5) * 4, start);
+      voice.gain.setValueAtTime(frequency < 200 ? 0.09 : 0.05, start);
+      osc.connect(voice);
+      voice.connect(padBus);
+      osc.start(start);
+      oscillators.push(osc);
+    }
+
+    const filterLfo = ctx.createOscillator();
+    const filterLfoDepth = ctx.createGain();
+    filterLfo.type = "sine";
+    filterLfo.frequency.setValueAtTime(0.09, start);
+    filterLfoDepth.gain.setValueAtTime(280, start);
+    filterLfo.connect(filterLfoDepth);
+    filterLfoDepth.connect(warmFilter.frequency);
+    filterLfo.start(start);
+    oscillators.push(filterLfo);
+
+    const noiseSource = ctx.createBufferSource();
+    const noiseFilter = ctx.createBiquadFilter();
+    const noiseGain = ctx.createGain();
+    noiseSource.buffer = createNoiseBuffer(ctx, 3);
+    noiseSource.loop = true;
+    noiseFilter.type = "bandpass";
+    noiseFilter.frequency.value = 720;
+    noiseFilter.Q.value = 0.35;
+    noiseGain.gain.setValueAtTime(0.006, start);
+    noiseSource.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    noiseGain.connect(padBus);
+    noiseSource.start(start);
+
+    const state: VinylHoverState = {
+      oscillators,
+      noiseSource,
+      masterGain,
+      warmFilter,
+      melodyTimer: null,
+      melodyStep: 0,
+    };
+    vinylHoverState = state;
+
+    const tickMelody = () => {
+      if (!vinylHoverState) {
+        return;
+      }
+      const frequency = VINYL_MELODY_HZ[vinylHoverState.melodyStep % VINYL_MELODY_HZ.length];
+      vinylHoverState.melodyStep += 1;
+      playWarmPluck(ctx, warmFilter, frequency);
+    };
+
+    window.setTimeout(tickMelody, 280);
+    state.melodyTimer = setInterval(tickMelody, 1650);
+  } catch {
+    stopVinylHover();
+  }
+}
+
+async function startVinylHover() {
+  if (vinylHoverState) {
+    return;
+  }
+
+  const ctx = audioContext?.state === "running"
+    ? audioContext
+    : await resumeAudioContextForVinyl();
+
+  if (!ctx) {
+    return;
+  }
+
+  startVinylHoverWithContext(ctx);
+}
+
+async function resumeAudioContextForVinyl(): Promise<AudioContext | null> {
+  if (!canPlayVinylHover()) {
+    return null;
+  }
+
+  return resumeAudioContext();
+}
+
+function startVinylHoverFromUserGesture() {
+  if (vinylHoverState) {
+    return;
+  }
+
+  markUserInteracted();
+
+  const ctx = audioContext;
+  if (!ctx) {
+    return;
+  }
+
+  if (ctx.state === "running") {
+    startVinylHoverWithContext(ctx);
+    return;
+  }
+
+  void ctx.resume().then((resumed) => {
+    if (!resumed || !canPlayVinylHover() || vinylHoverState) {
+      return;
+    }
+
+    startVinylHoverWithContext(ctx);
+  });
+}
+
+function stopVinylHover() {
+  if (!vinylHoverState) {
+    return;
+  }
+
+  const state = vinylHoverState;
+  vinylHoverState = null;
+
+  if (state.melodyTimer) {
+    clearInterval(state.melodyTimer);
+  }
+
+  const ctx = audioContext;
   if (!ctx) {
     return;
   }
 
   try {
-    SOUND_PLAYERS[id](ctx);
+    const stopAt = ctx.currentTime + 0.28;
+    state.masterGain.gain.cancelScheduledValues(ctx.currentTime);
+    state.masterGain.gain.setValueAtTime(state.masterGain.gain.value, ctx.currentTime);
+    state.masterGain.gain.exponentialRampToValueAtTime(0.0001, stopAt);
+
+    for (const osc of state.oscillators) {
+      osc.stop(stopAt + 0.05);
+    }
+
+    state.noiseSource?.stop(stopAt + 0.05);
   } catch {
-    // Audio should never break the UI.
+    // ignore teardown errors
   }
 }
 
 export const echoSounds = {
   isEnabled,
+  isMuted,
+  hasUserInteracted: () => userHasInteracted,
+  isAudioRunning,
   setEnabled,
+  installAudioUnlockListeners,
+  ensureAudioReady,
   toggle() {
-    const next = !isEnabled();
-    setEnabled(next);
-    if (next) {
-      const ctx = getContext();
-      if (ctx) {
-        playTone(ctx, 660, 0.06, { gain: 0.35 });
+    const enabling = isMuted();
+    setEnabled(enabling);
+    if (enabling) {
+      markUserInteracted();
+      if (audioContext?.state === "running") {
+        playTone(audioContext, 660, 0.06, { gain: 0.35 });
+      } else {
+        void audioContext?.resume().then((resumed) => {
+          if (resumed && audioContext) {
+            playTone(audioContext, 660, 0.06, { gain: 0.35 });
+          }
+        });
       }
     }
-    return next;
+    return enabling;
   },
   previewPlay: () => play("previewPlay"),
   previewPause: () => play("previewPause"),
@@ -226,4 +569,8 @@ export const echoSounds = {
   verdictError: () => play("verdictError"),
   sealConfirmed: () => play("sealConfirmed"),
   uiClick: () => play("uiClick"),
+  uiClickFromUserGesture,
+  vinylHoverStart: startVinylHover,
+  vinylHoverStartFromUserGesture: startVinylHoverFromUserGesture,
+  vinylHoverStop: stopVinylHover,
 };

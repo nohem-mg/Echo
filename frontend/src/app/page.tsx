@@ -740,7 +740,8 @@ export default function Home() {
   }, [audioName, flow, payment, pipelineProgressStatus, pipelineStarted, trackFingerprint, verification]);
 
   useEffect(() => {
-    setSfxEnabled(echoSounds.isEnabled());
+    setSfxEnabled(!echoSounds.isMuted());
+    echoSounds.installAudioUnlockListeners();
   }, []);
 
   useEffect(() => {
@@ -1969,6 +1970,7 @@ export default function Home() {
             <button
               type="button"
               className="grid size-10 place-items-center rounded-full border border-white/15 text-white/70 transition hover:border-[#f59abd] hover:text-[#f59abd]"
+              data-echo-silent
               onClick={() => setSfxEnabled(echoSounds.toggle())}
               aria-label={sfxEnabled ? "Mute interface sounds" : "Enable interface sounds"}
               title={sfxEnabled ? "Mute interface sounds" : "Enable interface sounds"}
@@ -1984,7 +1986,7 @@ export default function Home() {
         <div className="noise-layer echo-noise-drift" aria-hidden="true" />
         <div className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[1.02fr_0.98fr] lg:items-start">
           <div className="order-2 relative min-h-[640px] overflow-hidden rounded-[8px] border border-white/15 bg-black px-5 py-6 sm:px-8 lg:order-1 lg:px-10">
-            <div className="halftone echo-halftone absolute -left-24 top-16 size-80 opacity-45" aria-hidden="true" />
+            <div className="halftone echo-halftone pointer-events-none absolute -left-24 top-16 size-80 opacity-45" aria-hidden="true" />
             <div className="echo-starburst absolute right-8 top-8 z-10 hidden rotate-6 bg-[#fff7cf] px-6 py-5 text-center text-[#050505] starburst sm:block">
               <span className="font-hand text-lg">3 seals free</span>
             </div>
@@ -2015,9 +2017,9 @@ export default function Home() {
                   </p>
                 </div>
 
-                <div className="relative mx-auto aspect-square w-full max-w-[280px]">
-                  <VinylVisual isPlaying={isPlaying} />
-                </div>
+            <div className="relative z-20 mx-auto aspect-square w-full max-w-[280px]">
+              <VinylVisual isPlaying={isPlaying} />
+            </div>
               </div>
             </div>
           </div>
@@ -2690,11 +2692,11 @@ export default function Home() {
                   type="button"
                 >
                   <Tag className="size-5" aria-hidden="true" />
-                  {echoConfig.escrowAddress ? "Mettre en vente" : "Escrow non déployé"}
+                  {echoConfig.escrowAddress ? "List for sale" : "Escrow not deployed"}
                 </button>
               ) : (
                 <p className="rounded-[8px] border border-white/10 px-4 py-3 text-sm font-bold text-white/55">
-                  La vente de droits est disponible après un seal CLEAN.
+                  Rights sales unlock after a CLEAN Registry seal.
                 </p>
               )}
             </div>
@@ -2924,8 +2926,69 @@ function CertificateMetric({ label, value, copyValue }: { label: string; value: 
 }
 
 function VinylVisual({ isPlaying }: { isPlaying: boolean }) {
+  const vinylHoverRef = useRef(false);
+
+  useEffect(() => {
+    if (isPlaying && vinylHoverRef.current) {
+      vinylHoverRef.current = false;
+      echoSounds.vinylHoverStop();
+    }
+  }, [isPlaying]);
+
+  useEffect(() => () => {
+    if (vinylHoverRef.current) {
+      vinylHoverRef.current = false;
+      echoSounds.vinylHoverStop();
+    }
+  }, []);
+
+  function beginVinylHoverFromPointer() {
+    if (isPlaying || vinylHoverRef.current || !echoSounds.hasUserInteracted()) {
+      return;
+    }
+
+    vinylHoverRef.current = true;
+
+    if (echoSounds.isAudioRunning()) {
+      void echoSounds.vinylHoverStart();
+    }
+  }
+
+  function handleVinylPointerDown() {
+    if (isPlaying) {
+      return;
+    }
+
+    vinylHoverRef.current = true;
+    echoSounds.vinylHoverStartFromUserGesture();
+  }
+
+  function handleVinylPointerEnter() {
+    beginVinylHoverFromPointer();
+  }
+
+  function handleVinylPointerLeave() {
+    if (!vinylHoverRef.current) {
+      return;
+    }
+    vinylHoverRef.current = false;
+    echoSounds.vinylHoverStop();
+  }
+
   return (
-    <div className="absolute inset-0 grid place-items-center">
+    <div
+      className="absolute inset-0 grid cursor-pointer place-items-center"
+      onPointerDown={handleVinylPointerDown}
+      onPointerEnter={handleVinylPointerEnter}
+      onPointerLeave={handleVinylPointerLeave}
+      title={
+        echoSounds.isMuted()
+          ? "Enable sounds with the header volume button"
+          : echoSounds.hasUserInteracted()
+            ? "Hover for ambient vinyl sound"
+            : "Click once to activate vinyl sound"
+      }
+    >
       <div
         className={`vinyl relative size-full rounded-full border border-white/20 bg-[#111] ${isPlaying ? "vinyl-spin-fast" : "vinyl-spin-idle"}`}
       >
