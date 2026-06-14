@@ -466,12 +466,13 @@ function normalizeReportMatches(report?: EchoReport): ReportTableMatch[] {
 
   return report.similar_tracks.map((match) => {
     let keyLabel: string;
-    if (typeof match.BPM === "number" && match.BPM > 0) {
-      keyLabel = `${match.key} / ${match.BPM}`;
+    const musicalKey = match.key.startsWith("ISRC") ? "" : match.key;
+    if (musicalKey && typeof match.BPM === "number" && match.BPM > 0) {
+      keyLabel = `${musicalKey} / ${match.BPM}`;
     } else if (match.hook_intervals && match.hook_intervals > 0) {
       keyLabel = `${match.hook_intervals} intv.`;
     } else {
-      keyLabel = match.key;
+      keyLabel = musicalKey || "—";
     }
     return { ...match, keyLabel };
   });
