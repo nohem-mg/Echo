@@ -9,8 +9,8 @@ export function toRegistryBytes32(value: string): `0x${string}` {
   return `0x${createHash("sha256").update(value).digest("hex")}`;
 }
 
-export function buildFlowCommitmentHash(flowId: string, trackFingerprint: string): `0x${string}` {
-  return toRegistryBytes32(`commitment:${trackFingerprint}:${flowId}`);
+export function buildFlowCommitmentHash(_flowId: string, trackFingerprint: string): `0x${string}` {
+  return toRegistryBytes32(`commitment:${trackFingerprint}`);
 }
 
 export function buildFlowRegistryRef(uploadTrackId: string): `0x${string}` {

@@ -191,6 +191,20 @@ export async function createOrReuseFlow(input: CreateFlowInput) {
 
   if (process.env.DATABASE_URL) {
     await ensurePostgresSchema();
+
+    // Block a different identity from submitting a track whose analysis already completed.
+    const completed = await getPool().query(
+      `SELECT nullifier_hash FROM echo_flows
+       WHERE track_fingerprint = $1
+         AND status = 'pipeline_completed'
+         AND nullifier_hash != $2
+       LIMIT 1`,
+      [input.trackFingerprint, input.nullifierHash],
+    );
+    if (completed.rows.length > 0) {
+      throw new FlowStoreError("This track is already registered by another artist", 409);
+    }
+
     const result = await getPool().query(
       `
       INSERT INTO echo_flows (
@@ -214,6 +228,18 @@ export async function createOrReuseFlow(input: CreateFlowInput) {
 
   assertLocalFileStoreAvailable();
   const file = await readFlowFile();
+
+  // Block a different identity from submitting a track whose analysis already completed.
+  const alreadyCompleted = file.flows.find(
+    (flow) =>
+      flow.trackFingerprint === input.trackFingerprint &&
+      flow.status === "pipeline_completed" &&
+      flow.nullifierHash !== input.nullifierHash,
+  );
+  if (alreadyCompleted) {
+    throw new FlowStoreError("This track is already registered by another artist", 409);
+  }
+
   const existing = file.flows.find((flow) => flow.nullifierHash === input.nullifierHash && flow.trackFingerprint === input.trackFingerprint);
 
   if (existing) {
@@ -605,6 +631,11 @@ export async function resetFlowForPipelineRetry(flowId: string, trackId: string)
 
   if (!RETRYABLE_FLOW_STATUSES.has(flow.status)) {
     return getPipelineSteps(flowId);
+  }
+
+  // A completed flow cannot be re-analyzed (CLEAN verdict is final).
+  if (flow.status === "pipeline_completed") {
+    throw new FlowStoreError("This track has already been analyzed and cannot be re-submitted", 409);
   }
 
   const now = new Date().toISOString();
