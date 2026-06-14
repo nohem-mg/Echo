@@ -2405,6 +2405,15 @@ export default function Home() {
                   ?? flow.error
                   ?? "No Registry transaction was created."}
               </p>
+              {flow.error?.includes("Trial épuisé") && (
+                <button 
+                  className="mt-6 inline-flex items-center gap-2 rounded-full border border-[#f59abd]/50 bg-[#f59abd]/10 px-6 py-2.5 text-sm font-bold text-[#f59abd] transition hover:bg-[#f59abd]/20 cursor-not-allowed opacity-70"
+                  disabled
+                >
+                  <Sparkles className="size-4" />
+                  Pay with AgentKit (Coming Soon)
+                </button>
+              )}
             </div>
           ) : (
             <div className="rounded-[8px] border border-dashed border-white/15 bg-white/[0.01] p-12 text-center text-white/45">
