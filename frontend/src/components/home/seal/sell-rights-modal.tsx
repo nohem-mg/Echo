@@ -9,12 +9,10 @@ import { sepolia } from "wagmi/chains";
 import registryAbi from "@/lib/abi/Registry.json";
 import { echoConfig } from "@/lib/config";
 import { useUnlinkEscrow } from "@/lib/hooks/use-unlink-escrow";
+import { DURATION_LABELS, LICENSE_LABELS } from "@/lib/licensing";
 import { UnlinkDepositPanel } from "@/components/common/unlink-deposit-panel";
 
 const registryContractAbi = registryAbi.abi as Abi;
-
-const LICENSE_LABELS = ["Sync", "Beat", "Full"] as const;
-const DURATION_LABELS = ["1 an", "Perpétuel"] as const;
 
 type SellRightsModalProps = {
   trackId: string;
