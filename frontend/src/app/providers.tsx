@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { http, WagmiProvider } from "wagmi";
 import { sepolia } from "wagmi/chains";
-import EchoButtonSounds from "@/components/echo-button-sounds";
+import EchoButtonSounds from "@/components/common/echo-button-sounds";
 
 const config = getDefaultConfig({
   appName: "Echo",
