@@ -24,8 +24,8 @@ import {
 } from "wagmi";
 import { echoConfig } from "@/lib/config";
 import escrowAbiJson from "@/lib/abi/LicenseEscrow.json";
-import { useUnlinkEscrow } from "@/lib/use-unlink-escrow";
-import { UnlinkDepositPanel } from "@/components/unlink-deposit-panel";
+import { useUnlinkEscrow } from "@/lib/hooks/use-unlink-escrow";
+import { UnlinkDepositPanel } from "@/components/common/unlink-deposit-panel";
 
 const escrowAbi = escrowAbiJson.abi as Abi;
 

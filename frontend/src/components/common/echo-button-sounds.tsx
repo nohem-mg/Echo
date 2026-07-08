@@ -1,6 +1,6 @@
 "use client";
 
-import { useEchoButtonSounds } from "@/lib/use-echo-button-sounds";
+import { useEchoButtonSounds } from "@/lib/hooks/use-echo-button-sounds";
 
 export default function EchoButtonSounds() {
   useEchoButtonSounds();

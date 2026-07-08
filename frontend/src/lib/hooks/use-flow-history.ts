@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
-import type { EchoFlow } from "./types";
+import type { EchoFlow } from "@/lib/types";
 
 export type HistoryEntry = {
   flowId: string;
