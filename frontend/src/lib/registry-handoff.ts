@@ -36,34 +36,34 @@ export function buildFlowRegistryRef(uploadTrackId: string): `0x${string}` {
   return toRegistryBytes32(`registry-ref:${uploadTrackId}`);
 }
 
-/** CRE-only track id when no on-chain registerTrack is possible (analysis / REJECTED path). */
+/** CRE-only track id used before a CLEAN on-chain TrackSealed event exists. */
 export function buildProvisionalCreTrackId(uploadTrackId: string): `0x${string}` {
   return toRegistryBytes32(`registry-track:${uploadTrackId}`);
 }
 
-export function worldNullifierToBigInt(nullifierHash: string): bigint {
-  if (/^0x[0-9a-fA-F]+$/.test(nullifierHash)) {
-    try {
-      return BigInt(nullifierHash);
-    } catch {
-      // Fall through to deterministic hash for malformed hex strings.
-    }
-  }
-
-  return BigInt(toRegistryBytes32(nullifierHash));
-}
-
-export function parseTrackRegisteredTrackId(
+export function parseTrackSealedTrackId(
   logs: Log[],
   registryAddress: `0x${string}`,
+  commitmentHash?: `0x${string}`,
 ): `0x${string}` | undefined {
   const events = parseEventLogs({
     abi: registryContractAbi,
     logs,
-    eventName: "TrackRegistered",
-  }) as Array<{ address: `0x${string}`; args: { trackId?: Hex } }>;
+    eventName: "TrackSealed",
+  }) as Array<{
+    address: `0x${string}`;
+    args: { trackId?: Hex; commitmentHash?: Hex };
+  }>;
 
-  const match = events.find((event) => event.address.toLowerCase() === registryAddress.toLowerCase());
+  const match = events.find((event) => {
+    if (event.address.toLowerCase() !== registryAddress.toLowerCase()) {
+      return false;
+    }
+    if (!commitmentHash) {
+      return true;
+    }
+    return event.args.commitmentHash?.toLowerCase() === commitmentHash.toLowerCase();
+  });
   const trackId = match?.args.trackId;
   return typeof trackId === "string" ? trackId : undefined;
 }
@@ -87,14 +87,14 @@ export async function isTrackRegisteredOnChain(
 export async function findRegistryTrackIdByCommitment(
   publicClient: PublicClient,
   registryAddress: `0x${string}`,
-  artistAddress: `0x${string}`,
+  ownerAddress: `0x${string}`,
   commitmentHash: `0x${string}`,
 ): Promise<`0x${string}` | undefined> {
   const trackIds = (await publicClient.readContract({
     address: registryAddress,
     abi: registryContractAbi,
-    functionName: "getArtistTracks",
-    args: [artistAddress],
+    functionName: "getOwnerTracks",
+    args: [ownerAddress],
   })) as readonly `0x${string}`[];
 
   for (const trackId of trackIds) {
@@ -115,4 +115,3 @@ export async function findRegistryTrackIdByCommitment(
 
   return undefined;
 }
-

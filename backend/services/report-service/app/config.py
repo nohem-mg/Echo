@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    groq_api_key: str
+    groq_api_key: str | None = None
     groq_model: str = "llama-3.3-70b-versatile"
     groq_max_tokens: int = 2048
     log_level: str = "INFO"
