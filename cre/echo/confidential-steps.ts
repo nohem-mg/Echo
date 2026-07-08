@@ -1,6 +1,11 @@
 // ==========================================================================
-// Echo — Confidential pipeline steps (sensitive agents A–D via TEE)
+// Echo — Confidential pipeline steps (sensitive agents via TEE)
 // Mirrors steps.ts but routes through ConfidentialHTTPClient.
+//
+// Only the steps wired into client.ts live here: convert (Step 1) and
+// check-public (Step 2A). The remaining steps run over the plain HTTP path in
+// steps.ts; if they are ever moved behind the confidential client, add their
+// confidential variants back here.
 // ==========================================================================
 
 import type { Runtime } from "@chainlink/cre-sdk";
@@ -10,20 +15,7 @@ import {
   type ConfidentialClientOptions,
 } from "./confidential-backend";
 import type { Deferred } from "./backend";
-import type {
-  CheckPublicResponse,
-  CommercialDelta,
-  CompareCommercialResponse,
-  ComparePrivateResponse,
-  ConvertResponse,
-  RegisterResponse,
-  RegistryMatch,
-  ReportResponse,
-} from "./types";
-
-
-/** Escape a JSON string value for embedding in a bodyString `"{{.key}}"` slot. */
-const midiSequenceEscaped = (midiSequence: string) => JSON.stringify(midiSequence).slice(1, -1);
+import type { CheckPublicResponse, ConvertResponse } from "./types";
 
 function confPost<C, T>(
   runtime: Runtime<C>,
@@ -81,104 +73,6 @@ export function stepCheckPublicConfidential<C>(
     "step2a-check-public",
     '{"audioFile":"{{.audioRef}}"}',
     { audioRef },
-    ctx,
-    options,
-  );
-}
-
-// Agent C — MIDI comparison vs private registry (sensitive unreleased MIDI).
-export function stepComparePrivateConfidential<C>(
-  runtime: Runtime<C>,
-  baseUrl: string,
-  midiSequence: string,
-  ctx: ConfidentialClientContext,
-  options: ConfidentialClientOptions,
-): Deferred<ComparePrivateResponse> {
-  return confPost(
-    runtime,
-    baseUrl,
-    "/api/compare/private",
-    "step2b-compare-private",
-    '{"midiSequence":"{{.midiSequenceEscaped}}"}',
-    { midiSequenceEscaped: midiSequenceEscaped(midiSequence) },
-    ctx,
-    options,
-  );
-}
-
-// Agent D — MIDI comparison vs commercial previews.
-export function stepCompareCommercialConfidential<C>(
-  runtime: Runtime<C>,
-  baseUrl: string,
-  midiSequence: string,
-  ISRCs: string[],
-  ctx: ConfidentialClientContext,
-  options: ConfidentialClientOptions,
-): Deferred<CompareCommercialResponse> {
-  return confPost(
-    runtime,
-    baseUrl,
-    "/api/compare/commercial",
-    "step3-compare-commercial",
-    '{"midiSequence":"{{.midiSequenceEscaped}}","ISRCs":{{.isrcsJson}}}',
-    { midiSequenceEscaped: midiSequenceEscaped(midiSequence), isrcsJson: JSON.stringify(ISRCs) },
-    ctx,
-    options,
-  );
-}
-
-// SEAL — persist unreleased MIDI in the private registry (verdict CLEAN only).
-export function stepRegisterConfidential<C>(
-  runtime: Runtime<C>,
-  baseUrl: string,
-  args: { trackId: string; midiSequence: string; fingerprint?: string },
-  ctx: ConfidentialClientContext,
-  options: ConfidentialClientOptions,
-): Deferred<RegisterResponse> {
-  const fingerprintJson = args.fingerprint
-    ? JSON.stringify({ hash: args.fingerprint })
-    : "null";
-  return confPost(
-    runtime,
-    baseUrl,
-    "/api/registry",
-    "step5-registry-seal",
-    '{"track_id":"{{.trackId}}","midiSequence":"{{.midiSequenceEscaped}}","fingerprint":{{.fingerprintJson}}}',
-    {
-      trackId: args.trackId,
-      midiSequenceEscaped: midiSequenceEscaped(args.midiSequence),
-      fingerprintJson,
-    },
-    ctx,
-    options,
-  );
-}
-
-// Agent E — acoustic extraction + final report (sensitive audio + profile).
-export function stepReportConfidential<C>(
-  runtime: Runtime<C>,
-  baseUrl: string,
-  args: {
-    audioRef: string;
-    midiSequence: string;
-    registry_matches: RegistryMatch[];
-    commercial_deltas: CommercialDelta[];
-  },
-  ctx: ConfidentialClientContext,
-  options: ConfidentialClientOptions,
-): Deferred<ReportResponse> {
-  return confPost(
-    runtime,
-    baseUrl,
-    "/api/report",
-    "step4-report",
-    '{"audioFile":"{{.audioRef}}","midiSequence":"{{.midiSequenceEscaped}}","registry_matches":{{.registryJson}},"commercial_deltas":{{.commercialJson}}}',
-    {
-      audioRef: args.audioRef,
-      midiSequenceEscaped: midiSequenceEscaped(args.midiSequence),
-      registryJson: JSON.stringify(args.registry_matches),
-      commercialJson: JSON.stringify(args.commercial_deltas),
-    },
     ctx,
     options,
   );
