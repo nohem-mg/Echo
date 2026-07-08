@@ -131,6 +131,13 @@ STEP 1: BasicPitch (Audio → MIDI Conversion) ─── [STOP on failure]
   * 1. Extract key, mode, BPM, and acoustic fingerprint of the submitted track (from the raw audio).
   * 2. Aggregate the 2B and 3 results into a ranked list of similar tracks.
   * 3. Produce the final report with the verdict.
+
+> **Implementation note.** `report-service` extracts key/mode/BPM from the raw audio
+> signal via `acoustic.py` (librosa: chroma-based Krumhansl key detection + onset
+> tempo), matching the design above; the fingerprint is a SHA-256 of the raw audio
+> bytes. `acoustic.warmup()` runs at service start to avoid a librosa cold start on
+> the first (timeout-sensitive) CRE call. An explicit key/mode/BPM on the MIDI
+> payload still overrides the extracted values when present.
 * **Output:** `final_report` → `{ verdict: CLEAN | SIMILAR, submitted_track: { key, mode, BPM, fingerprint }, similar_tracks: [ { rank, title, source, score, melody, rhythm, structure, key, BPM } ], ai_summary: string }`.
   * `SIMILAR` → Report returned to the artist
   * `CLEAN` → Trigger on-chain commitment/registration
@@ -157,6 +164,12 @@ External applications can query the registry via the Clearance API. Each query r
 * IP verification before upload for streaming platforms.
 * Dataset screening for AI companies.
 * Certified reports for IP attorneys.
+
+> **Note — roadmap, not built.** The Clearance API and its per-query micro-payment
+> are **not implemented**. The only x402/AgentKit payment surface that exists today
+> is the challenge gating `POST /api/report` in the dev-gateway (`ECHO_REQUIRE_AGENTKIT`).
+> *Possible follow-up:* build the external query API if there's demand, reusing that
+> same x402 challenge pattern.
 
 ### 3.7 Unlink — On-chain Privacy Layer
 
@@ -193,6 +206,18 @@ Chainlink Confidential AI isolates the agents operating on sensitive data — th
 * **Input Confidentiality:** raw audio and MIDI sequences never leave the confidential environment.
 * **Output Integrity:** scores and the final report carry a cryptographically verifiable on-chain attestation.
 * **Pre-release Security:** unreleased tracks can be analyzed with zero risk of audio leakage.
+
+> **Note — current build vs. this design.** Only **Step 1 (convert)** and **Step 2A
+> (public check)** currently run over the confidential HTTP path, and only when
+> `useConfidentialHttp` is set (on for `staging`/`production`, off for `dev-audio`).
+> Confidential variants of Steps 2B, 3, 4 and the registry seal exist in
+> `cre/echo/confidential-steps.ts` but are **not wired into the client**, so those
+> steps currently run over the plain HTTP path. Separately, the Registry contract
+> does **not** verify a Confidential-AI attestation itself — trust is anchored in
+> the Keystone forwarder (the DON quorum signs the report; the forwarder verifies
+> those signatures before calling `onReport`). *Possible follow-up:* wire the
+> remaining confidential steps and/or carry an attestation into `onReport` for
+> on-chain verification.
 
 ---
 
@@ -238,7 +263,15 @@ The Registry contract is the single source of truth for all prior-art claims. Ea
 World ID humanity/uniqueness is enforced **upstream at the agent gate**: only a verified human can trigger a seal. The World ID nullifier is deliberately **not** stored on-chain — it is the same per human, so persisting it would make an artist's tracks publicly correlatable while buying no on-chain enforcement. The contract therefore has no World Router dependency.
 
 ### 6.3 CRE → Contract Write Flow
-Chainlink CRE acts as a trusted off-chain executor. Once the 4-step DAG completes with a CLEAN verdict, the CRE's on-chain callback (`onReport`) creates and seals the entry in a single atomic transaction. The callback includes the Confidential AI attestation, verified by the contract before acceptance. SIMILAR / REJECTED / ERROR verdicts halt off-chain and write no on-chain state.
+Chainlink CRE acts as a trusted off-chain executor. Once the 4-step DAG completes with a CLEAN verdict, the CRE's on-chain callback (`onReport`) creates and seals the entry in a single atomic transaction. SIMILAR / REJECTED / ERROR verdicts halt off-chain and write no on-chain state.
+
+> **Note — current build vs. this design.** The trust anchor is the **Keystone
+> forwarder**, not an attestation the Registry inspects: the DON quorum signs the
+> report, the forwarder verifies those signatures, and `onReport` only checks
+> `msg.sender == creAddress` before decoding `(owner, commitmentHash, registryRef)`.
+> The contract does **not** parse or verify a Confidential-AI attestation.
+> *Possible follow-up:* carry an attestation into `onReport` and verify it on-chain
+> if trust-minimization beyond the forwarder is required.
 
 ### 6.4 SEALED → REVEALED Lifecycle
 * **SEALED:** hash on-chain, timestamp locked, audio and profile remain confidential. Ready for legal dispute resolution.
