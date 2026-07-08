@@ -5,6 +5,8 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
     groq_max_tokens: int = 2048
     log_level: str = "INFO"
+    # Seconds of raw audio decoded for key/BPM/fingerprint extraction (Step 4).
+    max_audio_seconds: float = 60.0
 
     model_config = {"env_prefix": "ECHO_REPORT_"}
 

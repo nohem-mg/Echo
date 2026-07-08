@@ -8,6 +8,9 @@ dependencies = [
     "pydantic-settings>=2.0",
     "groq>=0.9",
     "python-multipart>=0.0.9",
+    "librosa>=0.11",
+    "numpy>=1.26",
+    "soundfile>=0.12",
 ]
 
 [project.optional-dependencies]
