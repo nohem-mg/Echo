@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import { handleRouteError } from "@/lib/api-route";
 import { createPublicClient, http, isAddress, parseEther, toHex } from "viem";
 import { sepolia } from "viem/chains";
-import { confirmFlowPayment, FlowStoreError, markFlowError } from "@/lib/flow-store";
+import { confirmFlowPayment, markFlowError } from "@/lib/flow-store";
 import type { PaymentConfirmRequest } from "@/lib/types";
 
 const DEFAULT_RECEIVER = "0x0000000000000000000000000000000000000000";
@@ -88,10 +89,6 @@ export async function POST(request: Request): Promise<Response> {
       },
     });
   } catch (error) {
-    if (error instanceof FlowStoreError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-
-    throw error;
+    return handleRouteError(error);
   }
 }

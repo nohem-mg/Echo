@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { handleRouteError } from "@/lib/api-route";
 import { isAddress } from "viem";
-import { assignPaymentReference, FlowStoreError } from "@/lib/flow-store";
+import { assignPaymentReference } from "@/lib/flow-store";
 
 const DEFAULT_RECEIVER = "0x0000000000000000000000000000000000000000";
 const SEPOLIA_CHAIN_ID = 11155111;
@@ -44,11 +45,7 @@ export async function POST(request: Request): Promise<Response> {
       flow,
     });
   } catch (error) {
-    if (error instanceof FlowStoreError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-
-    throw error;
+    return handleRouteError(error);
   }
 }
 

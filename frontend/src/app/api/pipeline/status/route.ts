@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { FlowStoreError, getFlow, getPipelineSteps, getTrackForFlow } from "@/lib/flow-store";
+import { handleRouteError, loadFlowBundle } from "@/lib/api-route";
 
 export const runtime = "nodejs";
 
@@ -12,22 +12,14 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
-    const [flow, track, pipeline] = await Promise.all([getFlow(flowId), getTrackForFlow(flowId), getPipelineSteps(flowId)]);
+    const bundle = await loadFlowBundle(flowId);
 
-    if (!flow) {
+    if (!bundle.flow) {
       return NextResponse.json({ error: "Flow not found" }, { status: 404 });
     }
 
-    return NextResponse.json({
-      flow,
-      track,
-      pipeline,
-    });
+    return NextResponse.json(bundle);
   } catch (error) {
-    if (error instanceof FlowStoreError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-
-    throw error;
+    return handleRouteError(error);
   }
 }

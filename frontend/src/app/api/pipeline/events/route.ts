@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
+import { handleRouteError } from "@/lib/api-route";
 import {
   blockPipeline,
   completePipeline,
-  FlowStoreError,
   getFlow,
   getPipelineSteps,
   getTrackForFlow,
-  toSafeErrorMessage,
   updatePipelineOutcome,
   updatePipelineStep,
 } from "@/lib/flow-store";
@@ -124,17 +123,7 @@ export async function POST(request: Request): Promise<Response> {
       step,
     });
   } catch (error) {
-    if (error instanceof FlowStoreError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-
-    return NextResponse.json(
-      {
-        error: "Pipeline event failed",
-        details: toSafeErrorMessage(error),
-      },
-      { status: 500 },
-    );
+    return handleRouteError(error, { message: "Pipeline event failed" });
   }
 }
 
