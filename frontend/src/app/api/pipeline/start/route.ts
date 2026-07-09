@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { FlowStoreError, getFlow, getTrackForFlow, initializePipeline } from "@/lib/flow-store";
+import { handleRouteError } from "@/lib/api-route";
+import { getFlow, getTrackForFlow, initializePipeline } from "@/lib/flow-store";
 import {
   buildFlowCommitmentHash,
   buildFlowRegistryRef,
@@ -102,11 +103,7 @@ export async function POST(request: Request): Promise<Response> {
       },
     });
   } catch (error) {
-    if (error instanceof FlowStoreError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-
-    throw error;
+    return handleRouteError(error);
   }
 }
 

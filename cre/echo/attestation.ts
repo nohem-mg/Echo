@@ -9,7 +9,6 @@
 import {
   bytesToHex,
   getHeader,
-  hexToBase64,
   prepareReportRequest,
   Report,
   type Runtime,
@@ -109,9 +108,4 @@ export function verifyAgentAttestations(attestations: readonly AgentAttestation[
       throw new Error(`empty Confidential AI attestation for step ${step}`);
     }
   }
-}
-
-/** Convenience: encode payload as base64 for runtime.report() debugging. */
-export function encodeCallbackReportPayloadBase64(result: PipelineResult): string {
-  return hexToBase64(encodeCallbackReportPayload(result));
 }

@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
+import { handleRouteError } from "@/lib/api-route";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { put } from "@vercel/blob";
 import { NextResponse } from "next/server";
-import { createTrackId, FlowStoreError, getFlow, getTrackForFlow, initializePipeline, saveTrackUpload, toSafeErrorMessage } from "@/lib/flow-store";
+import { createTrackId, FlowStoreError, getFlow, getTrackForFlow, initializePipeline, saveTrackUpload } from "@/lib/flow-store";
 import type { EchoFlow, TrackUploadResponse } from "@/lib/types";
 
 const AUDIO_TYPES = new Set(["audio/mpeg", "audio/mp3", "audio/wav", "audio/wave", "audio/x-wav", "audio/vnd.wave"]);
@@ -116,17 +117,7 @@ export async function POST(request: Request): Promise<Response> {
       },
     } satisfies TrackUploadResponse);
   } catch (error) {
-    if (error instanceof FlowStoreError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-
-    return NextResponse.json(
-      {
-        error: "Track upload failed",
-        details: toSafeErrorMessage(error),
-      },
-      { status: 500 },
-    );
+    return handleRouteError(error, { message: "Track upload failed" });
   }
 }
 

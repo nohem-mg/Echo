@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { handleRouteError } from "@/lib/api-route";
 import type { IDKitResult } from "@worldcoin/idkit-core";
-import { createOrReuseFlow, FlowStoreError, toSafeErrorMessage } from "@/lib/flow-store";
+import { createOrReuseFlow } from "@/lib/flow-store";
 import { mockWorldEnabled } from "@/lib/server-env";
 
 type VerifyRequest = {
@@ -114,17 +115,6 @@ async function createFlowOrResponse({
       worldMode: mode,
     });
   } catch (error) {
-    if (error instanceof FlowStoreError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-
-    console.error("Echo flow persistence failed", error);
-    return NextResponse.json(
-      {
-        error: "Flow persistence failed",
-        details: toSafeErrorMessage(error),
-      },
-      { status: 500 },
-    );
+    return handleRouteError(error, { message: "Flow persistence failed", log: true });
   }
 }

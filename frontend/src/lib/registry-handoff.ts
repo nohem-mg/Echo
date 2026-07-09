@@ -36,11 +36,6 @@ export function buildFlowRegistryRef(uploadTrackId: string): `0x${string}` {
   return toRegistryBytes32(`registry-ref:${uploadTrackId}`);
 }
 
-/** CRE-only track id used before a CLEAN on-chain TrackSealed event exists. */
-export function buildProvisionalCreTrackId(uploadTrackId: string): `0x${string}` {
-  return toRegistryBytes32(`registry-track:${uploadTrackId}`);
-}
-
 export function parseTrackSealedTrackId(
   logs: Log[],
   registryAddress: `0x${string}`,
@@ -82,36 +77,4 @@ export async function isTrackRegisteredOnChain(
 
   const timestamp = (entry as { timestamp?: bigint }).timestamp ?? BigInt(0);
   return timestamp > BigInt(0);
-}
-
-export async function findRegistryTrackIdByCommitment(
-  publicClient: PublicClient,
-  registryAddress: `0x${string}`,
-  ownerAddress: `0x${string}`,
-  commitmentHash: `0x${string}`,
-): Promise<`0x${string}` | undefined> {
-  const trackIds = (await publicClient.readContract({
-    address: registryAddress,
-    abi: registryContractAbi,
-    functionName: "getOwnerTracks",
-    args: [ownerAddress],
-  })) as readonly `0x${string}`[];
-
-  for (const trackId of trackIds) {
-    const entry = (await publicClient.readContract({
-      address: registryAddress,
-      abi: registryContractAbi,
-      functionName: "getEntry",
-      args: [trackId],
-    })) as { commitmentHash?: `0x${string}`; timestamp?: bigint };
-
-    if (
-      (entry.timestamp ?? BigInt(0)) > BigInt(0) &&
-      entry.commitmentHash?.toLowerCase() === commitmentHash.toLowerCase()
-    ) {
-      return trackId;
-    }
-  }
-
-  return undefined;
 }

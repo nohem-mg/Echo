@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
+import { handleRouteError } from "@/lib/api-route";
 import { get as getBlob } from "@vercel/blob";
 import { NextResponse } from "next/server";
-import { FlowStoreError, getFlow, getTrackForFlow, toSafeErrorMessage } from "@/lib/flow-store";
+import { FlowStoreError, getFlow, getTrackForFlow } from "@/lib/flow-store";
 import type { EchoFlow, EchoTrack } from "@/lib/types";
 
 type SoundCloudUploadRequest = {
@@ -65,17 +66,7 @@ export async function POST(request: Request): Promise<Response> {
 
     return NextResponse.json(payload, { status: response.status });
   } catch (error) {
-    if (error instanceof FlowStoreError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-
-    return NextResponse.json(
-      {
-        error: "SoundCloud publish failed",
-        details: toSafeErrorMessage(error),
-      },
-      { status: 500 },
-    );
+    return handleRouteError(error, { message: "SoundCloud publish failed" });
   }
 }
 
