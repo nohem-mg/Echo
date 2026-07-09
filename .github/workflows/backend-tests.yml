@@ -1,0 +1,72 @@
+# Priority 1: one runner, one shared venv for all five light services
+# (basic-pitch-service is excluded — its ML deps are ~2GB and its tests
+# importorskip without them). Every service's package is named `app`, so tests
+# must run with `python -m pytest` from the service directory: cwd precedes
+# site-packages on sys.path and resolves the local ./app.
+#
+# The Postgres service container mirrors backend/docker-compose.yml
+# (postgres:16-alpine, schema from backend/db/init/), which un-skips the
+# registry store's real-SQL test.
+name: Backend service tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-tests.yml"
+
+concurrency:
+  group: backend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: echo
+          POSTGRES_PASSWORD: echo
+          POSTGRES_DB: echo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U echo -d echo"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/packages/echo-common/pyproject.toml
+            backend/services/*/pyproject.toml
+      - name: Install echo-common + all services (shared venv)
+        run: |
+          pip install -e backend/packages/echo-common
+          for service in report-service midi-similarity-service registry-service acrcloud-service soundcloud-service; do
+            pip install -e "backend/services/${service}[dev]"
+          done
+      - name: Apply registry schema
+        run: psql postgresql://echo:echo@localhost:5432/echo -f backend/db/init/01_registry.sql
+      - name: Run all service suites
+        env:
+          ECHO_REGISTRY_TEST_DATABASE_URL: postgresql://echo:echo@localhost:5432/echo
+        run: |
+          failed=0
+          for service in report-service midi-similarity-service registry-service acrcloud-service soundcloud-service; do
+            echo "::group::${service}"
+            (cd "backend/services/${service}" && python -m pytest -q) || failed=1
+            echo "::endgroup::"
+          done
+          exit "${failed}"
