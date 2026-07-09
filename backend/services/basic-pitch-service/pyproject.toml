@@ -4,11 +4,8 @@ version = "0.1.0"
 description = "Echo — pipeline Step 1: raw audio -> MIDI conversion via Spotify BasicPitch."
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    # echo-common is a sibling path package (backend/packages/echo-common). Plain pip
-    # can't resolve it by name, so install it first:
-    #   pip install -e ../../packages/echo-common
-    # then `pip install -e ".[dev]"`. The Dockerfile does both. It provides FastAPI,
-    # the error envelope, structured logging, audio validation, and the MIDI contract.
+    # Also requires the sibling package echo-common, installed first — see
+    # backend/README.md ("Develop a single service").
     "uvicorn[standard]>=0.29",
     "pydantic-settings>=2.2",
     # BasicPitch + its runtime. The exact ML backend (tf/coreml/tflite/onnx) is

@@ -21,7 +21,6 @@ class Settings(BaseSettings):
     minimum_frequency: float | None = None
     maximum_frequency: float | None = None
 
-    # --- Observability ---
     log_level: str = "INFO"
 
 

@@ -22,10 +22,7 @@ class Settings(BaseSettings):
     allowed_extensions: tuple[str, ...] = ("wav", "mp3", "flac", "ogg", "aiff", "m4a")
     max_upload_bytes: int = 314_572_800  # 300 MB
 
-    # --- HTTP client ---
     timeout_s: float = 30.0
-
-    # --- Observability ---
     log_level: str = "INFO"
 
 

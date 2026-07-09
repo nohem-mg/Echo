@@ -17,12 +17,14 @@ backend/
     ├── basic-pitch-service/      # Step 1  — audio -> MIDI                   (port 8001)
     ├── acrcloud-service/         # Step 2A — fingerprint vs ACRCloud         (port 8002)
     ├── midi-similarity-service/  # Step 2B — composition vs registry (compute) (port 8003)
-    └── registry-service/         # private registry of sealed tracks (owns DB) (port 8004)
+    ├── registry-service/         # private registry of sealed tracks (owns DB) (port 8004)
+    ├── report-service/           # Step 4  — key/BPM extraction + final report (port 8005)
+    └── soundcloud-service/       # post-SEAL — publish to SoundCloud         (port 8006)
 ```
 
 `registry-service` owns the PostgreSQL registry (written at SEAL, read by
 midi-similarity for comparison). Still to come: Step 3 (commercial disambiguation, see
-`docs/adr/0001`), Step 4 (report). Each is a new folder under `services/` reusing `echo-common`.
+`docs/adr/0001`). Each new step is a folder under `services/` reusing `echo-common`.
 
 ## Run everything (Docker)
 
@@ -32,6 +34,16 @@ docker compose up --build acrcloud-service   # just one
 ```
 
 Build context is `backend/` so each image bundles `echo-common` with its service.
+
+To drive the pipeline through the CRE (dev):
+
+```bash
+bun backend/dev-gateway/server.ts    # CRE-facing API on :8080 (services up first)
+cd cre && cre workflow simulate echo --target staging-settings \
+    --http-payload ./echo/sample-submission.json --trigger-index 0 --non-interactive
+```
+
+The CRE staging config already points at `http://127.0.0.1:8080` (`cre/echo/config.staging.json`).
 
 ## Develop a single service
 

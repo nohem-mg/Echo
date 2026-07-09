@@ -131,7 +131,6 @@ class SoundCloudService:
                         data={
                             "track[title]": metadata.title,
                             "track[description]": metadata.description,
-                            # SoundCloud "sharing" maps directly to our privacy field.
                             "track[sharing]": metadata.privacy,
                         },
                         files={"track[asset_data]": audio_file},
