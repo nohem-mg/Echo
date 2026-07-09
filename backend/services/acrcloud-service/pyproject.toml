@@ -4,10 +4,8 @@ version = "0.1.0"
 description = "Echo — pipeline Step 2A: acoustic fingerprint vs ACRCloud public database."
 requires-python = ">=3.10"
 dependencies = [
-    # echo-common is a sibling path package (backend/packages/echo-common). Install it
-    # first: `pip install -e ../../packages/echo-common`, then `pip install -e ".[dev]"`.
-    # The Dockerfile does both. It provides FastAPI, the error envelope, structured
-    # logging, and audio validation.
+    # Also requires the sibling package echo-common, installed first — see
+    # backend/README.md ("Develop a single service").
     "uvicorn[standard]>=0.29",
     "pydantic-settings>=2.2",
     "httpx>=0.27",

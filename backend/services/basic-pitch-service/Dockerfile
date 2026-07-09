@@ -10,7 +10,6 @@ RUN apt-get update \
 
 WORKDIR /srv
 
-# Shared package first (changes rarely → better layer caching).
 COPY packages/echo-common /pkg/echo-common
 RUN pip install --no-cache-dir /pkg/echo-common
 

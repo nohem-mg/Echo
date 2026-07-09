@@ -13,6 +13,13 @@ on:
     paths:
       - "backend/services/basic-pitch-service/**"
       - ".github/workflows/basic-pitch-tests.yml"
+  # On merge to main, one run seeds the pip cache that future PR branches
+  # restore from (PR-branch caches are not shared across branches).
+  push:
+    branches: [main]
+    paths:
+      - "backend/services/basic-pitch-service/**"
+      - ".github/workflows/basic-pitch-tests.yml"
 
 concurrency:
   group: basic-pitch-tests-${{ github.ref }}

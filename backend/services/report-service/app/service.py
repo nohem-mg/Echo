@@ -58,11 +58,9 @@ class ReportService:
             return False
             
         for t in similar_tracks:
-            # High similarity in both melody and rhythm
             if t.melody > 70 and t.rhythm > 70:
                 return False
-                
-            # Overall similarity exceeds the maximum allowed threshold
+
             if t.score > 75:
                 return False
                 
@@ -147,7 +145,7 @@ Analyze the similarities against the legal framework. Pay special attention to h
             return self._fallback_summary(submitted_track, similar_tracks, verdict)
 
         text = response.choices[0].message.content.strip()
-        # Strip markdown formatting to ensure clean text output
+        # The model sometimes emits "**Heading**" lines despite the plain-text prompt.
         text = re.sub(r'\*\*[^*]+\*\*\n?', '', text).strip()
         
         return text

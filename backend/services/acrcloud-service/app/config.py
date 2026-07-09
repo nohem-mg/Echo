@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     allowed_extensions: tuple[str, ...] = ("wav", "mp3", "flac", "ogg", "m4a")
     max_upload_bytes: int = 50 * 1024 * 1024  # 50 MB
 
-    # --- Observability ---
     log_level: str = "INFO"
 
 

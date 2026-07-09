@@ -35,7 +35,6 @@ async def soundcloud_upload(
 
     Returns the SoundCloud track URL and permalink on success.
     """
-    # Parse and validate JSON metadata field.
     try:
         meta = UploadMetadata.model_validate(json.loads(metadata))
     except (json.JSONDecodeError, ValueError) as exc:
@@ -48,7 +47,6 @@ async def soundcloud_upload(
     with audio.persist_upload(file, ext, settings.max_upload_bytes) as path:
         result = await _service(request).upload(path, meta)
 
-    # Inject the request_id that the middleware attached.
     result.request_id = request.state.request_id
 
     logger.info(
