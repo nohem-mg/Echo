@@ -1,0 +1,42 @@
+# Priority 3, off the PR critical path: basic-pitch-service is Step 1 of the
+# pipeline (audio → MIDI) but its ML runtime is a ~2GB install, so it runs
+# only on changes to the service itself or on manual dispatch (Actions tab →
+# this workflow → "Run workflow") — never on a schedule.
+# Install recipe mirrors the service Dockerfile: Python 3.11 (the only
+# version where basic-pitch installs everywhere), libsndfile1 + ffmpeg.
+name: Basic-pitch service tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/services/basic-pitch-service/**"
+      - ".github/workflows/basic-pitch-tests.yml"
+
+concurrency:
+  group: basic-pitch-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install audio system libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsndfile1 ffmpeg
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend/packages/echo-common/pyproject.toml
+            backend/services/basic-pitch-service/pyproject.toml
+      - name: Install echo-common + basic-pitch-service
+        run: |
+          pip install -e backend/packages/echo-common
+          pip install -e "backend/services/basic-pitch-service[dev]"
+      - name: Run tests
+        working-directory: backend/services/basic-pitch-service
+        run: python -m pytest -q

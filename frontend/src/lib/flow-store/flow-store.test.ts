@@ -4,13 +4,19 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 /**
- * End-to-end test of the flow pipeline through the public flow-store API on
- * the file adapter: the same call sequence the API routes make, asserting
- * that data written by each step is what the next step reads.
+ * End-to-end test of the flow pipeline through the public flow-store API:
+ * the same call sequence the API routes make, asserting that data written by
+ * each step is what the next step reads.
+ *
+ * Runs against the file adapter by default. Set FLOW_STORE_TEST_DATABASE_URL
+ * to run the identical suite against the Postgres adapter (the backend every
+ * Vercel deployment uses) — CI runs both.
  *
  * The file adapter resolves its data file from process.cwd() at import time,
  * so the store is imported dynamically after chdir'ing into a temp dir.
  */
+
+const TEST_DATABASE_URL = process.env.FLOW_STORE_TEST_DATABASE_URL;
 
 let store: typeof import("@/lib/flow-store");
 let dataDir: string;
@@ -23,9 +29,23 @@ beforeAll(async () => {
   originalCwd = process.cwd();
   dataDir = await mkdtemp(path.join(tmpdir(), "echo-flow-store-test-"));
   process.chdir(dataDir);
-  delete process.env.DATABASE_URL;
+  if (TEST_DATABASE_URL) {
+    process.env.DATABASE_URL = TEST_DATABASE_URL;
+  } else {
+    delete process.env.DATABASE_URL;
+  }
   delete process.env.VERCEL;
   store = await import("@/lib/flow-store");
+
+  if (TEST_DATABASE_URL) {
+    // First store call creates the schema; then start from empty tables so
+    // the suite's fixed ids can't collide with a previous local run.
+    await store.getPersistenceHealth();
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: TEST_DATABASE_URL, max: 1 });
+    await pool.query("TRUNCATE echo_flows, echo_tracks, echo_pipeline_steps");
+    await pool.end();
+  }
 });
 
 afterAll(async () => {
