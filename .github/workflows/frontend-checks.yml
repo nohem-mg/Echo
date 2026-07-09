@@ -1,0 +1,35 @@
+# Priority 2: integration tests that drive the flow pipeline through the
+# public flow-store API (verify → pay → upload → analyze → complete), plus a
+# fast blockable typecheck. One bun install feeds both.
+# Deliberately NOT `next build` — Vercel already builds every PR preview — and
+# no lint (skipped by choice to keep CI minutes low; fold in later if wanted).
+name: Frontend tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-checks.yml"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-checks.yml"
+
+concurrency:
+  group: frontend-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run typecheck

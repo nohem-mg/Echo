@@ -1,0 +1,33 @@
+# Priority 1: the CRE workflow is the pipeline's brain (verdict logic, step
+# orchestration, attestations, EVM callback). 46 tests + typecheck in under a
+# minute — the cheapest certitude in the repo.
+name: CRE pipeline tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "cre/**"
+      - ".github/workflows/cre-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cre/**"
+      - ".github/workflows/cre-tests.yml"
+
+concurrency:
+  group: cre-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cre/echo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run typecheck
