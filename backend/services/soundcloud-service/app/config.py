@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from echo_common.profiles import ProfiledSettings
+from pydantic_settings import SettingsConfigDict
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ECHO_SC_", env_file=".env")
+class Settings(ProfiledSettings):
+    model_config = SettingsConfigDict(env_prefix="ECHO_SC_", env_file=("../../.env", ".env"), extra="ignore")
+
+    # Preset bundles — select with ECHO_SC_PROFILE; explicit env vars still win.
+    PROFILES = {
+        # Quick private demos: small files, fail fast.
+        "demo": {"max_upload_bytes": 52_428_800, "timeout_s": 15.0},
+        # DJ sets / mixes: large files need a patient upstream call.
+        "long_form": {"max_upload_bytes": 524_288_000, "timeout_s": 120.0},
+    }
 
     # --- SoundCloud app credentials (from https://soundcloud.com/you/apps) ---
     # Used only to refresh a supplied or configured user token.

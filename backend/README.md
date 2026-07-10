@@ -35,10 +35,15 @@ docker compose up --build acrcloud-service   # just one
 
 Build context is `backend/` so each image bundles `echo-common` with its service.
 
+All configuration lives in a single **`backend/.env`** (copy `backend/.env.example`):
+compose feeds it to every container, services run from their own directory read it
+as `../../.env`, and per-service prefixes (`ECHO_BP_`, `ECHO_ACR_`, …) keep the
+namespaces separate.
+
 To drive the pipeline through the CRE (dev):
 
 ```bash
-bun backend/dev-gateway/server.ts    # CRE-facing API on :8080 (services up first)
+(cd backend && bun run dev)          # CRE-facing gateway on :8080 (loads backend/.env)
 cd cre && cre workflow simulate echo --target staging-settings \
     --http-payload ./echo/sample-submission.json --trigger-index 0 --non-interactive
 ```

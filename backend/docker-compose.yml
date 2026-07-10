@@ -11,7 +11,7 @@ services:
     ports:
       - "8001:8001"
     env_file:
-      - path: ./services/basic-pitch-service/.env
+      - path: ./.env
         required: false
     restart: unless-stopped
 
@@ -22,7 +22,7 @@ services:
     ports:
       - "8002:8002"
     env_file:
-      - path: ./services/acrcloud-service/.env
+      - path: ./.env
         required: false
     restart: unless-stopped
 
@@ -36,7 +36,7 @@ services:
       # Pure compute: reads the registry over HTTP, owns no data.
       ECHO_MIDI_REGISTRY_URL: http://registry-service:8004
     env_file:
-      - path: ./services/midi-similarity-service/.env
+      - path: ./.env
         required: false
     depends_on:
       - registry-service
@@ -52,7 +52,7 @@ services:
       # Owns the private registry; points at the compose Postgres service.
       ECHO_REGISTRY_DATABASE_URL: postgresql://echo:echo@registry-db:5432/echo
     env_file:
-      - path: ./services/registry-service/.env
+      - path: ./.env
         required: false
     depends_on:
       registry-db:
@@ -66,7 +66,7 @@ services:
     ports:
       - "8005:8005"
     env_file:
-      - path: ./services/report-service/.env
+      - path: ./.env
         required: false
     restart: unless-stopped
 
@@ -77,7 +77,7 @@ services:
     ports:
       - "8006:8006"
     env_file:
-      - path: ./services/soundcloud-service/.env
+      - path: ./.env
         required: false
     restart: unless-stopped
 

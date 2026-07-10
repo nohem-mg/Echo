@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from echo_common.profiles import ProfiledSettings
+from pydantic_settings import SettingsConfigDict
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ECHO_BP_", env_file=".env")
+class Settings(ProfiledSettings):
+    model_config = SettingsConfigDict(env_prefix="ECHO_BP_", env_file=("../../.env", ".env"), extra="ignore")
+
+    # Preset bundles — select with ECHO_BP_PROFILE; explicit env vars still win.
+    PROFILES = {
+        # Quiet or dense material: catch short/soft notes, at the cost of noise.
+        "sensitive": {"onset_threshold": 0.3, "frame_threshold": 0.2, "minimum_note_length_ms": 60.0},
+        # Clean melodic lines: suppress phantom notes.
+        "strict": {"onset_threshold": 0.7, "frame_threshold": 0.5, "minimum_note_length_ms": 150.0},
+    }
 
     # --- Audio input bounds (validated BEFORE any inference) ---
     # Formats accepted by librosa; WAV recommended (lossless -> better transcription).

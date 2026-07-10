@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     groq_api_key: str | None = None
@@ -8,6 +8,6 @@ class Settings(BaseSettings):
     # Seconds of raw audio decoded for key/BPM/fingerprint extraction (Step 4).
     max_audio_seconds: float = 60.0
 
-    model_config = {"env_prefix": "ECHO_REPORT_"}
+    model_config = SettingsConfigDict(env_prefix="ECHO_REPORT_", env_file=("../../.env", ".env"), extra="ignore")
 
 settings = Settings()
