@@ -1,7 +1,8 @@
 import { createAgentkitClient, agentkitResourceServerExtension } from "@worldcoin/agentkit";
 import { privateKeyToAccount } from "viem/accounts";
 
-const PRIVATE_KEY = "0x6fabcc38e151f2d4c4cfd06da1963b250ed0b7e352ffb6789d7238939f0cb457";
+const PRIVATE_KEY = process.env.PRIVATE_KEY as `0x${string}`;
+if (!PRIVATE_KEY) throw new Error("Set PRIVATE_KEY (throwaway testnet key) before running this scratch harness.");
 const account = privateKeyToAccount(PRIVATE_KEY);
 
 const agentkit = createAgentkitClient({
