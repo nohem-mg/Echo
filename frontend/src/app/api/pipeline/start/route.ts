@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { handleRouteError } from "@/lib/api-route";
 import { getFlow, getTrackForFlow, initializePipeline } from "@/lib/flow-store";
+import { paymentEnforced } from "@/lib/server-env";
 import {
   buildFlowCommitmentHash,
   buildFlowRegistryRef,
@@ -67,6 +68,13 @@ export async function POST(request: Request): Promise<Response> {
 
     if (body.trackId && body.trackId !== track.id) {
       return NextResponse.json({ error: "trackId does not match this flow" }, { status: 409 });
+    }
+
+    // Payment gate: `txHash` is the durable record of a confirmed flow-fee
+    // payment (set at confirm, preserved across track upload). Enforced only
+    // when ECHO_ENFORCE_PAYMENT is on, since payment is mocked in dev.
+    if (paymentEnforced() && !flow.txHash) {
+      return NextResponse.json({ error: "Flow fee has not been paid" }, { status: 402 });
     }
 
     const pipeline = await initializePipeline({

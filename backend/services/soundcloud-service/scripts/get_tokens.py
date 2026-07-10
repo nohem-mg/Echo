@@ -7,14 +7,19 @@ Steps:
 """
 
 import http.server
+import os
+import sys
 import threading
 import urllib.parse
 import webbrowser
 
-CLIENT_ID = "qBxpkAf9CMVFL2yYQrOvo5rwjDuiUCby"
-CLIENT_SECRET = "ZGEOvbBfGpfPFoRPtJwwul2uqoaFnOMr"
+CLIENT_ID = os.environ.get("ECHO_SC_CLIENT_ID", "")
+CLIENT_SECRET = os.environ.get("ECHO_SC_CLIENT_SECRET", "")
 REDIRECT_URI = "http://localhost:8888/callback"
 PORT = 8888
+
+if not CLIENT_ID or not CLIENT_SECRET:
+    sys.exit("Set ECHO_SC_CLIENT_ID and ECHO_SC_CLIENT_SECRET (see backend/.env) before running.")
 
 _code: str | None = None
 _done = threading.Event()

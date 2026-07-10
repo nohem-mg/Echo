@@ -5,8 +5,17 @@ const html = (script: string) =>
     headers: { "Content-Type": "text/html" },
   });
 
+// JSON.stringify does not escape sequences that are significant inside an
+// inline <script> (</script>, <!--) or as JS line terminators (U+2028/U+2029).
+// Escape them so an attacker-controlled `error` value cannot break out.
+const safeJson = (data: Record<string, unknown>) =>
+  JSON.stringify(data).replace(
+    /[<>\u2028\u2029]/g,
+    (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"),
+  );
+
 const postMessage = (data: Record<string, unknown>) =>
-  `window.opener?.postMessage(${JSON.stringify(data)},window.location.origin);window.close();`;
+  `window.opener?.postMessage(${safeJson(data)},window.location.origin);window.close();`;
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
