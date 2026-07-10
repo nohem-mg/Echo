@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ECHO_REGISTRY_", env_file=".env")
+    model_config = SettingsConfigDict(env_prefix="ECHO_REGISTRY_", env_file=("../../.env", ".env"), extra="ignore")
 
     # Private registry (PostgreSQL). Empty -> in-memory store (dev/tests).
     database_url: str = ""
