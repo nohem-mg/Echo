@@ -1,9 +1,48 @@
 # Echo backend — service orchestrator. Quick start lives in README.md.
 # Build context is this directory (backend/) so each image can pull in the shared
 # echo-common package alongside its own service. One block per microservice; the
-# CRE reaches them by service name on the internal network
-# (e.g. http://basic-pitch-service:8001, http://acrcloud-service:8002).
+# CRE reaches the gateway, which fans out to the services by name on the internal
+# network (e.g. http://basic-pitch-service:8001, http://acrcloud-service:8002).
+#
+# This base file is the DEV topology: every service publishes its port to the
+# host and the gateway runs in dev mode. docker-compose.prod.yml overrides it for
+# internet-facing deploys (TLS edge, internal-only ports) — see README.
 services:
+  gateway:
+    build:
+      context: .
+      dockerfile: dev-gateway/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      # Reach the services by compose service name, not localhost.
+      ECHO_BASIC_PITCH_URL: http://basic-pitch-service:8001
+      ECHO_ACRCLOUD_URL: http://acrcloud-service:8002
+      ECHO_MIDI_URL: http://midi-similarity-service:8003
+      ECHO_REGISTRY_URL: http://registry-service:8004
+      ECHO_REPORT_URL: http://report-service:8005
+      ECHO_SOUNDCLOUD_URL: http://soundcloud-service:8006
+      # Dev conveniences (fixture audio, Step-3 mock, report fallback). prod turns this off.
+      ECHO_GATEWAY_DEV: "true"
+    env_file:
+      - path: ./.env
+        required: false
+    depends_on:
+      - basic-pitch-service
+      - acrcloud-service
+      - midi-similarity-service
+      - registry-service
+      - report-service
+      - soundcloud-service
+    healthcheck:
+      # 127.0.0.1, not localhost: busybox wget resolves localhost to ::1 first,
+      # but Bun binds IPv4 (0.0.0.0), so localhost would be refused.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   basic-pitch-service:
     build:
       context: .
@@ -13,6 +52,11 @@ services:
     env_file:
       - path: ./.env
         required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   acrcloud-service:
@@ -24,6 +68,11 @@ services:
     env_file:
       - path: ./.env
         required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   midi-similarity-service:
@@ -40,6 +89,11 @@ services:
         required: false
     depends_on:
       - registry-service
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   registry-service:
@@ -57,6 +111,11 @@ services:
     depends_on:
       registry-db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   report-service:
@@ -68,6 +127,11 @@ services:
     env_file:
       - path: ./.env
         required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   soundcloud-service:
@@ -79,6 +143,11 @@ services:
     env_file:
       - path: ./.env
         required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   registry-db:

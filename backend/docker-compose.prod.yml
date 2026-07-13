@@ -1,0 +1,60 @@
+# Production overlay for an internet-facing deploy. Layer it on the base file:
+#
+#   ECHO_GATEWAY_DOMAIN=echo-backend.example.com \
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What it changes vs. the base (dev) topology:
+#   - Adds Caddy as the ONLY public service (80/443), auto-provisioning TLS for
+#     ECHO_GATEWAY_DOMAIN and reverse-proxying to the gateway.
+#   - Drops every other published port (`!reset []`) so the services, the gateway,
+#     and Postgres are reachable only on the internal compose network. This is what
+#     closes the unauthenticated-Unlink-proxy exposure: those routes are no longer
+#     reachable from outside the network.
+#   - Turns the gateway's dev conveniences off (real services only, no mocks/fixtures).
+#
+# `!reset` requires Docker Compose v2.24+.
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ECHO_GATEWAY_DOMAIN: ${ECHO_GATEWAY_DOMAIN:?set ECHO_GATEWAY_DOMAIN to your backend domain}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+  gateway:
+    ports: !reset []
+    environment:
+      ECHO_GATEWAY_DEV: "false"
+
+  basic-pitch-service:
+    ports: !reset []
+
+  acrcloud-service:
+    ports: !reset []
+
+  midi-similarity-service:
+    ports: !reset []
+
+  registry-service:
+    ports: !reset []
+
+  report-service:
+    ports: !reset []
+
+  soundcloud-service:
+    ports: !reset []
+
+  registry-db:
+    ports: !reset []
+
+volumes:
+  caddy-data:
+  caddy-config:

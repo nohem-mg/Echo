@@ -47,7 +47,11 @@ const MIDI_URL = process.env.ECHO_MIDI_URL ?? "http://127.0.0.1:8003";
 const REGISTRY_URL = process.env.ECHO_REGISTRY_URL ?? "http://127.0.0.1:8004";
 const REPORT_URL = process.env.ECHO_REPORT_URL ?? "http://127.0.0.1:8005";
 const SOUNDCLOUD_URL = process.env.ECHO_SOUNDCLOUD_URL ?? "http://127.0.0.1:8006";
-const VERBOSE = process.env.ECHO_GATEWAY_VERBOSE !== "0";
+// Dev conveniences (local-fixture audio, the Step-3 mock, the report mock
+// fallback, verbose logs) are only active when ECHO_GATEWAY_DEV=true. In
+// production the gateway talks to real services and errors instead of faking.
+const DEV_MODE = process.env.ECHO_GATEWAY_DEV === "true";
+const VERBOSE = process.env.ECHO_GATEWAY_VERBOSE === "1" || (DEV_MODE && process.env.ECHO_GATEWAY_VERBOSE !== "0");
 const DEV_AUDIO_OVERRIDE = process.env.ECHO_DEV_AUDIO;
 /** CRE sim: HTTP resp ≤250 KB, consensus observation ≤25 KB — long tracks need a short clip. */
 const MAX_AUDIO_SECONDS = Number(process.env.ECHO_MAX_AUDIO_SECONDS ?? 15);
@@ -194,15 +198,11 @@ const proxySoundCloudUpload = async (req: Request): Promise<Response> => {
 /** Resolve an audioRef to bytes (dev/test paths — not the prod TEE path). */
 const resolveAudio = async (audioRef: string): Promise<{ bytes: Uint8Array; filename: string }> => {
   if (isUnusableAudioRef(audioRef)) {
+    if (!DEV_MODE) throw new Error(`unusable audioRef in production: '${audioRef}'`);
     if (DEV_AUDIO_OVERRIDE) return readLocalAudio(DEV_AUDIO_OVERRIDE, "ECHO_DEV_AUDIO");
     if (existsSync(DEFAULT_UPLOAD)) return readLocalAudio(DEFAULT_UPLOAD, "default upload.mp3");
     vlog(`audioRef unusable (${audioRef}) — fallback arpeggio.wav`);
     return readLocalAudio(DEV_AUDIO, "fixture");
-  }
-
-  if (audioRef.startsWith("file://")) {
-    const path = audioRef.slice("file://".length);
-    return readLocalAudio(path, "file://");
   }
 
   if (audioRef.startsWith("http://") || audioRef.startsWith("https://")) {
@@ -212,6 +212,15 @@ const resolveAudio = async (audioRef: string): Promise<{ bytes: Uint8Array; file
     const bytes = new Uint8Array(await res.arrayBuffer());
     vlog(`audio ← fetched ${formatBytes(bytes.length)}`);
     return { bytes, filename: audioRef.split("/").pop()?.split("?")[0] || "audio" };
+  }
+
+  // Local-file resolution (file://, absolute paths, fixture fallback) is a dev
+  // convenience only — never read the gateway's local disk in production.
+  if (!DEV_MODE) throw new Error(`non-HTTP audioRef rejected in production: '${audioRef.slice(0, 48)}'`);
+
+  if (audioRef.startsWith("file://")) {
+    const path = audioRef.slice("file://".length);
+    return readLocalAudio(path, "file://");
   }
 
   if (existsSync(audioRef)) return readLocalAudio(audioRef, "path");
@@ -382,7 +391,9 @@ const upstreamError = (err: unknown) => {
 
 Bun.serve({
   port: PORT,
-  hostname: "127.0.0.1",
+  // 0.0.0.0 so other containers (Caddy) can reach the gateway. Public exposure
+  // is controlled by compose networking, not this bind address.
+  hostname: process.env.ECHO_GATEWAY_HOST ?? "0.0.0.0",
   async fetch(req) {
     const { pathname } = new URL(req.url);
 
@@ -578,6 +589,7 @@ Bun.serve({
         return json({ code: "validation_error", message: "audioFile and midiSequence required" }, 422);
       }
       if (!(await healthy(REPORT_URL))) {
+        if (!DEV_MODE) return json({ code: "service_unavailable", message: "report-service unavailable" }, 503);
         vlog("← report MOCK (report-service down)");
         return json(mockReport());
       }
@@ -590,14 +602,15 @@ Bun.serve({
         });
         return json(reportResult);
       } catch (err) {
-        // Service up but errored (e.g. missing/invalid Groq key) — fall back to mock.
+        // Service up but errored (e.g. missing/invalid Groq key).
+        if (!DEV_MODE) return json({ code: "report_failed", message: String(err) }, 502);
         console.warn("[gateway] report-service error, falling back to mock:", String(err));
         return json(mockReport());
       }
     }
 
-    // -- Step 3: mocked until the commercial service exists -------------------
-    const mock = mockRoutes[pathname];
+    // -- Step 3: mocked until the commercial service exists (dev only) --------
+    const mock = DEV_MODE ? mockRoutes[pathname] : undefined;
     if (mock && req.method === "POST") {
       await req.text();
       vlog(`→ POST ${pathname}  (MOCK — service not built)`);

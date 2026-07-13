@@ -29,11 +29,28 @@ midi-similarity for comparison). Still to come: Step 3 (commercial disambiguatio
 ## Run everything (Docker)
 
 ```bash
-docker compose up --build            # all services
+docker compose up --build            # all services + the gateway
 docker compose up --build acrcloud-service   # just one
 ```
 
 Build context is `backend/` so each image bundles `echo-common` with its service.
+The gateway is containerized too and reaches services by compose name; every
+service has a `/health` healthcheck so containers restart independently.
+
+### Production deploy (internet-facing)
+
+`docker-compose.prod.yml` overlays the base file for a single-VM deploy: Caddy is
+the only public service (auto-TLS for your domain) and reverse-proxies to the
+gateway; every other port is dropped so services + Postgres are internal-only.
+
+```bash
+ECHO_GATEWAY_DOMAIN=echo-backend.example.com \
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+The gateway runs with `ECHO_GATEWAY_DEV=false` there — no fixture audio, no
+Step-3 mock, no report fallback; it errors instead of faking. Point the CRE's
+`backendBaseUrl` (`cre/echo/config.production.json`) at `https://<your-domain>`.
 
 All configuration lives in a single **`backend/.env`** (copy `backend/.env.example`):
 compose feeds it to every container, services run from their own directory read it

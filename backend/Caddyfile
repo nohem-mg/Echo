@@ -1,0 +1,7 @@
+# Production TLS edge. Caddy fetches and renews Let's Encrypt certificates
+# automatically for ECHO_GATEWAY_DOMAIN and reverse-proxies to the gateway on
+# the internal compose network. The gateway is the ONLY service published to
+# the internet; every other service and the database stay internal-only.
+{$ECHO_GATEWAY_DOMAIN} {
+	reverse_proxy gateway:8080
+}
